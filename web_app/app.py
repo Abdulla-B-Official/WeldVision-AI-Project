@@ -4,12 +4,13 @@ app.py — WeldVision AI  |  Production-Ready Entry Point.
 
 import os
 
-# ── Limit thread spawning BEFORE importing libraries to fit within Render memory limits ──
+# ── Limit thread spawning and memory allocation BEFORE importing heavy libraries ──
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
 
 import io
 import logging
@@ -85,6 +86,8 @@ def predict():
 
     try:
         pil_image = Image.open(io.BytesIO(file.read()))
+        # Cap image resolution immediately to prevent RAM spikes on large uploads
+        pil_image.thumbnail((640, 640))
         cv2_image = utils.pil_to_cv2(pil_image)
         cv2_image = utils.resize_if_large(cv2_image, MAX_IMAGE_SIZE)
     except Exception as exc:

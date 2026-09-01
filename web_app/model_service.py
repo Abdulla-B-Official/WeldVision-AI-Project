@@ -5,6 +5,7 @@ The model is loaded at module import time so every Flask request reuses
 the same in-memory model (no per-request disk I/O).
 """
 
+import gc
 import logging
 import time
 import cv2
@@ -184,3 +185,6 @@ def run_inference(
             "inference_time_ms": 0.0,
             "error": str(exc),
         }
+    finally:
+        # Force garbage collection to free unused tensors back to the system
+        gc.collect()
