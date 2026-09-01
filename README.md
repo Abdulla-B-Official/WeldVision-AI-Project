@@ -1,3 +1,63 @@
+# 🔧 WeldVision AI — Real-Time Weld Quality Inspection & Defect Detection
+
+[![Live Demo](https://img.shields.io/badge/Render-Live%20Demo-46E3B7?style=for-the-badge&logo=render&logoColor=black)](https://weldvision-ai-project.onrender.com)
+[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-FF9900?style=for-the-badge)](https://docs.ultralytics.com/)
+[![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-CPU_Optimized-00599C?style=for-the-badge&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
+[![Flask](https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white)](https://opencv.org/)
+[![Roboflow](https://img.shields.io/badge/Roboflow-Data_Prep-6706CE?style=for-the-badge&logo=roboflow&logoColor=white)](https://roboflow.com/)
+
+<p align="center">
+  <b>AI-powered industrial computer vision system for automatically identifying, classifying, and inspecting weld quality using a custom-trained, CPU-optimized YOLOv8s ONNX model.</b>
+</p>
+
+---
+
+## 🔗 Live Application
+
+🔗 [weldvision-ai-project.onrender.com](https://weldvision-ai-project.onrender.com)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Model-YOLOv8s_ONNX-blue?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Classes-3-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Test_mAP%4050-97.22%25-success?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Test_Precision-92.66%25-brightgreen?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Test_Recall-93.19%25-orange?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/Test_mAP%4050--95-69.63%25-purple?style=for-the-badge" />
+</p>
+
+---
+
+##  Model Evaluation Performance
+
+The model was evaluated across validation and test splits prior to deployment:
+
+### Validation Metrics
+
+| Metric | Score |
+| --- | --- |
+| **Precision** | **92.02%** |
+| **Recall** | **92.81%** |
+| **mAP@50** | **96.77%** |
+| **mAP@50–95** | **68.77%** |
+
+### Test Metrics (Final Evaluation)
+
+| Metric | Score |
+| --- | --- |
+| **Precision** | **92.66%** |
+| **Recall** | **93.19%** |
+| **mAP@50** | **97.22%** |
+| **mAP@50–95** | **69.63%** |
+
+### Test Performance Summary
+
+```text
+Precision     ██████████████████   92.66%
+Recall        ██████████████████   93.19%
+mAP@50        ███████████████████  97.22%
+mAP@50-95     █████████████        69.63%
 #  WeldVision AI — Real-Time Weld Quality Inspection & Defect Detection
 
 ---
