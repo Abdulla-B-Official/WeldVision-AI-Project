@@ -14,8 +14,8 @@ WEB_APP_DIR  = Path(__file__).resolve().parent
 PROJECT_ROOT = WEB_APP_DIR.parent
 
 # Primary path: web_app/models/best.pt (for Render and GitHub tracking)
-# Fallback path: runs/weld_yolov8m/weights/best.pt (for local computer training runs)
-LOCAL_MODEL_PATH = PROJECT_ROOT / "runs" / "weld_yolov8m" / "weights" / "best.pt"
+# Fallback path: runs/detect/weld_yolov8s/weights/best.pt (for local computer training runs)
+LOCAL_MODEL_PATH = PROJECT_ROOT / "runs" / "detect" / "weld_yolov8s" / "weights" / "best.pt"
 WEB_MODEL_PATH = WEB_APP_DIR / "models" / "best.pt"
 
 # Automatically choose whichever model path exists
@@ -28,7 +28,7 @@ DATA_PATH = PROJECT_ROOT / "data.yaml"
 
 # ── Inference settings ─────────────────────────────────────────────────────────
 DEFAULT_CONF_THRESHOLD = 0.50
-MAX_IMAGE_SIZE = 1280          # pixels — longer edge resized if larger
+MAX_IMAGE_SIZE = 640          # Cap to 640px max edge to optimize RAM usage on Render
 
 # ── Class semantics ──────────────────────────────────────────────────────────
 GOOD_IDS      = {0}       # class 0 → Good Weld  (corrected)
