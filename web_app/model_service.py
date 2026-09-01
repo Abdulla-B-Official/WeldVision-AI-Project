@@ -1,5 +1,5 @@
 """
-model_service.py — Loads YOLOv8 once at startup and provides inference.
+model_service.py — Loads YOLOv8 (ONNX/PyTorch) once at startup and provides inference.
 
 The model is loaded at module import time so every Flask request reuses
 the same in-memory model (no per-request disk I/O).
@@ -26,8 +26,9 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-# ── Disable gradient computation globally to conserve memory ──
+# ── Maximize low-memory CPU execution settings ──
 torch.set_grad_enabled(False)
+torch.set_num_threads(1)  # Prevents thread-pool RAM explosion on small CPU instances
 
 # ── Load model once ────────────────────────────────────────────────────────────
 _model = None
@@ -38,10 +39,15 @@ try:
     if MODEL_PATH.exists():
         from ultralytics import YOLO
 
-        _model = YOLO(str(MODEL_PATH))
-        _model.to(DEVICE)
+        # Load ONNX or PyTorch weights directly using task='detect'
+        _model = YOLO(str(MODEL_PATH), task="detect")
+
+        # Fuse layers only if using a PyTorch model (.pt)
+        if MODEL_PATH.suffix == ".pt" and hasattr(_model, "fuse"):
+            _model.fuse()
+
         _model_loaded = True
-        logger.info(f"Model loaded from {MODEL_PATH} on {DEVICE}")
+        logger.info(f"Model loaded successfully from {MODEL_PATH}")
     else:
         _model_error = f"Model file not found: {MODEL_PATH}"
         logger.warning(_model_error)
@@ -59,7 +65,7 @@ def get_status() -> dict:
         "model_loaded": _model_loaded,
         "model_name": MODEL_PATH.name,
         "model_path": str(MODEL_PATH),
-        "device": DEVICE,
+        "device": DEVICE if MODEL_PATH.suffix == ".pt" else "cpu (onnx)",
         "error": _model_error,
     }
 
@@ -94,13 +100,12 @@ def run_inference(
     try:
         t_start = time.perf_counter()
 
-        # Enforce inference mode and constrain image size (imgsz=640) to prevent OOM errors
+        # Run inference using 640px constraint
         with torch.inference_mode():
             results = _model.predict(
                 source=image,
                 conf=conf_threshold,
-                imgsz=640,
-                device=DEVICE,
+                imgsz=MAX_IMAGE_SIZE,
                 verbose=False,
             )
 
@@ -116,11 +121,10 @@ def run_inference(
                 confidence = float(box.conf[0])
                 class_id = int(box.cls[0])
 
-                # Use corrected display name (CLASS_DISPLAY_NAMES overrides
-                # the model's embedded names which are swapped vs reality)
-                class_name = CLASS_DISPLAY_NAMES.get(
-                    class_id, _model.names[class_id]
-                )
+                # Resolve class display names safely across ONNX and PyTorch runtimes
+                names = getattr(_model, "names", {}) or getattr(result, "names", {})
+                fallback_name = names.get(class_id, f"Class {class_id}")
+                class_name = CLASS_DISPLAY_NAMES.get(class_id, fallback_name)
 
                 color = COLOR_GOOD if class_id in GOOD_IDS else COLOR_DEFECTIVE
 
@@ -186,5 +190,7 @@ def run_inference(
             "error": str(exc),
         }
     finally:
-        # Force garbage collection to free unused tensors back to the system
+        # Clear PyTorch CPU cache and force garbage collection
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
         gc.collect()

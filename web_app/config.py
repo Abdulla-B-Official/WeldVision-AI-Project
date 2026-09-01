@@ -13,14 +13,17 @@ import torch
 WEB_APP_DIR  = Path(__file__).resolve().parent
 PROJECT_ROOT = WEB_APP_DIR.parent
 
-# Primary path: web_app/models/best.pt (for Render and GitHub tracking)
-# Fallback path: runs/detect/weld_yolov8s/weights/best.pt (for local computer training runs)
-LOCAL_MODEL_PATH = PROJECT_ROOT / "runs" / "detect" / "weld_yolov8s" / "weights" / "best.pt"
-WEB_MODEL_PATH = WEB_APP_DIR / "models" / "best.pt"
+# Primary path: web_app/models/best.onnx (Lightweight ONNX model for deployment)
+# Fallback paths for PyTorch (.pt) models if ONNX is missing locally
+WEB_ONNX_MODEL_PATH = WEB_APP_DIR / "models" / "best.onnx"
+WEB_PT_MODEL_PATH   = WEB_APP_DIR / "models" / "best.pt"
+LOCAL_MODEL_PATH    = PROJECT_ROOT / "runs" / "detect" / "weld_yolov8s" / "weights" / "best.pt"
 
-# Automatically choose whichever model path exists
-if WEB_MODEL_PATH.exists():
-    MODEL_PATH = WEB_MODEL_PATH
+# Automatically choose ONNX first, then fall back to PyTorch weights
+if WEB_ONNX_MODEL_PATH.exists():
+    MODEL_PATH = WEB_ONNX_MODEL_PATH
+elif WEB_PT_MODEL_PATH.exists():
+    MODEL_PATH = WEB_PT_MODEL_PATH
 else:
     MODEL_PATH = LOCAL_MODEL_PATH
 
