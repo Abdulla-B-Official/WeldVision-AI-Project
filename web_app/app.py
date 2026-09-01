@@ -2,15 +2,16 @@
 app.py — WeldVision AI  |  Production-Ready Entry Point.
 """
 
+import io
 import logging
 import os
+from pathlib import Path
 import sys
 import threading
 import webbrowser
-import io
-from pathlib import Path
 
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
+from PIL import Image
 
 # ── Ensure sibling modules resolve regardless of entry point ──
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -163,16 +164,14 @@ def internal_error(_):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Dynamically read environment variables provided by Render / Cloud hosts
     HOST = os.environ.get("HOST", "0.0.0.0")
     PORT = int(os.environ.get("PORT", 5000))
-    
+
     info = model_service.get_status()
     logger.info(f"Model loaded={info['model_loaded']}  device={info['device']}")
     if not info["model_loaded"]:
         logger.warning(f"Model NOT loaded: {info.get('error')}")
 
-    # Only open browser locally if explicitly running interactively
     if os.environ.get("RENDER") is None:
         threading.Timer(0.5, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}")).start()
 
