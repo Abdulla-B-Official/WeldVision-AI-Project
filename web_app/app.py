@@ -2,9 +2,17 @@
 app.py — WeldVision AI  |  Production-Ready Entry Point.
 """
 
+import os
+
+# ── Limit thread spawning BEFORE importing libraries to fit within Render memory limits ──
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import io
 import logging
-import os
 from pathlib import Path
 import sys
 import threading

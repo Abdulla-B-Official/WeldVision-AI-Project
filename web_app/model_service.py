@@ -5,33 +5,38 @@ The model is loaded at module import time so every Flask request reuses
 the same in-memory model (no per-request disk I/O).
 """
 
-import time
 import logging
-import numpy as np
+import time
 import cv2
+import numpy as np
+import torch
 
 from config import (
-    MODEL_PATH,
-    DEVICE,
-    DEFAULT_CONF_THRESHOLD,
-    MAX_IMAGE_SIZE,
-    GOOD_IDS,
-    DEFECTIVE_IDS,
     CLASS_DISPLAY_NAMES,
-    COLOR_GOOD,
     COLOR_DEFECTIVE,
+    COLOR_GOOD,
+    DEFAULT_CONF_THRESHOLD,
+    DEFECTIVE_IDS,
+    DEVICE,
+    GOOD_IDS,
+    MAX_IMAGE_SIZE,
+    MODEL_PATH,
 )
 
 logger = logging.getLogger(__name__)
 
+# ── Disable gradient computation globally to conserve memory ──
+torch.set_grad_enabled(False)
+
 # ── Load model once ────────────────────────────────────────────────────────────
-_model        = None
+_model = None
 _model_loaded = False
-_model_error  = None
+_model_error = None
 
 try:
     if MODEL_PATH.exists():
         from ultralytics import YOLO
+
         _model = YOLO(str(MODEL_PATH))
         _model.to(DEVICE)
         _model_loaded = True
@@ -49,12 +54,12 @@ except Exception as exc:
 def get_status() -> dict:
     """Return current model status information."""
     return {
-        "status":       "online",
+        "status": "online",
         "model_loaded": _model_loaded,
-        "model_name":   MODEL_PATH.name,
-        "model_path":   str(MODEL_PATH),
-        "device":       DEVICE,
-        "error":        _model_error,
+        "model_name": MODEL_PATH.name,
+        "model_path": str(MODEL_PATH),
+        "device": DEVICE,
+        "error": _model_error,
     }
 
 
@@ -87,12 +92,17 @@ def run_inference(
 
     try:
         t_start = time.perf_counter()
-        results = _model.predict(
-            source=image,
-            conf=conf_threshold,
-            device=DEVICE,
-            verbose=False,
-        )
+
+        # Enforce inference mode and constrain image size (imgsz=640) to prevent OOM errors
+        with torch.inference_mode():
+            results = _model.predict(
+                source=image,
+                conf=conf_threshold,
+                imgsz=640,
+                device=DEVICE,
+                verbose=False,
+            )
+
         t_end = time.perf_counter()
         inference_ms = round((t_end - t_start) * 1000, 2)
 
@@ -103,10 +113,13 @@ def run_inference(
             for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 confidence = float(box.conf[0])
-                class_id   = int(box.cls[0])
+                class_id = int(box.cls[0])
+
                 # Use corrected display name (CLASS_DISPLAY_NAMES overrides
                 # the model's embedded names which are swapped vs reality)
-                class_name = CLASS_DISPLAY_NAMES.get(class_id, _model.names[class_id])
+                class_name = CLASS_DISPLAY_NAMES.get(
+                    class_id, _model.names[class_id]
+                )
 
                 color = COLOR_GOOD if class_id in GOOD_IDS else COLOR_DEFECTIVE
 
@@ -139,33 +152,35 @@ def run_inference(
 
                 detections.append(
                     {
-                        "class_id":    class_id,
-                        "class_name":  class_name,
-                        "confidence":  round(confidence, 4),
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "confidence": round(confidence, 4),
                         "is_defective": class_id in DEFECTIVE_IDS,
                         "bbox": {
-                            "x1": x1, "y1": y1,
-                            "x2": x2, "y2": y2,
+                            "x1": x1,
+                            "y1": y1,
+                            "x2": x2,
+                            "y2": y2,
                         },
                     }
                 )
 
         return {
-            "success":           True,
-            "annotated_image":   annotated,
-            "detections":        detections,
-            "count":             len(detections),
+            "success": True,
+            "annotated_image": annotated,
+            "detections": detections,
+            "count": len(detections),
             "inference_time_ms": inference_ms,
-            "error":             None,
+            "error": None,
         }
 
     except Exception as exc:
         logger.exception("Inference failed")
         return {
-            "success":           False,
-            "annotated_image":   image,
-            "detections":        [],
-            "count":             0,
+            "success": False,
+            "annotated_image": image,
+            "detections": [],
+            "count": 0,
             "inference_time_ms": 0.0,
-            "error":             str(exc),
+            "error": str(exc),
         }
