@@ -1,5 +1,8 @@
+Flask
+gunicorn
+Pillow
+opencv-python-headless
 ultralytics
-opencv-python
 matplotlib
 pandas
 seaborn
