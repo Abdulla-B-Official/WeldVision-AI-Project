@@ -29,28 +29,6 @@
 
 ---
 
-##  Model Evaluation Performance
-
-The model was evaluated across validation and test splits prior to deployment:
-
-### Validation Metrics
-
-| Metric | Score |
-| --- | --- |
-| **Precision** | **92.02%** |
-| **Recall** | **92.81%** |
-| **mAP@50** | **96.77%** |
-| **mAP@50–95** | **68.77%** |
-
-### Test Metrics (Final Evaluation)
-
-| Metric | Score |
-| --- | --- |
-| **Precision** | **92.66%** |
-| **Recall** | **93.19%** |
-| **mAP@50** | **97.22%** |
-| **mAP@50–95** | **69.63%** |
-
 ### Test Performance Summary
 
 ```text
