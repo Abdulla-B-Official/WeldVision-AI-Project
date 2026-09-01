@@ -5,6 +5,11 @@ The model is loaded at module import time so every Flask request reuses
 the same in-memory model (no per-request disk I/O).
 """
 
+import os
+
+# Set writable configuration directory for Ultralytics before importing it
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+
 import gc
 import logging
 import time
@@ -121,7 +126,7 @@ def run_inference(
                 confidence = float(box.conf[0])
                 class_id = int(box.cls[0])
 
-                # Resolve class display names safely across ONNX and PyTorch runtimes
+                # Resolve class display names safely using CLASS_DISPLAY_NAMES from config.py
                 names = getattr(_model, "names", {}) or getattr(result, "names", {})
                 fallback_name = names.get(class_id, f"Class {class_id}")
                 class_name = CLASS_DISPLAY_NAMES.get(class_id, fallback_name)
