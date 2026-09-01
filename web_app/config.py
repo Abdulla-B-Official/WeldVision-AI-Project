@@ -7,19 +7,18 @@ Path resolution: this file lives at web_app/config.py
 """
 
 from pathlib import Path
-import torch
 
 # ── Project paths ──────────────────────────────────────────────────────────────
 WEB_APP_DIR  = Path(__file__).resolve().parent
 PROJECT_ROOT = WEB_APP_DIR.parent
 
 # Primary path: web_app/models/best.onnx (Lightweight ONNX model for deployment)
-# Fallback paths for PyTorch (.pt) models if ONNX is missing locally
+# Fallback paths for model configuration
 WEB_ONNX_MODEL_PATH = WEB_APP_DIR / "models" / "best.onnx"
 WEB_PT_MODEL_PATH   = WEB_APP_DIR / "models" / "best.pt"
 LOCAL_MODEL_PATH    = PROJECT_ROOT / "runs" / "detect" / "weld_yolov8s" / "weights" / "best.pt"
 
-# Automatically choose ONNX first, then fall back to PyTorch weights
+# Automatically choose ONNX first
 if WEB_ONNX_MODEL_PATH.exists():
     MODEL_PATH = WEB_ONNX_MODEL_PATH
 elif WEB_PT_MODEL_PATH.exists():
@@ -53,4 +52,4 @@ COLOR_GOOD      = (0, 220, 100)   # vibrant green
 COLOR_DEFECTIVE = (0, 60, 230)    # vibrant red (BGR)
 
 # ── Device ─────────────────────────────────────────────────────────────────────
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu"  # Pure ONNX CPU execution target
