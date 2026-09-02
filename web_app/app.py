@@ -1,6 +1,5 @@
 """
 app.py — Flask REST API Server for WeldVision AI.
-Handles UI rendering, single image inference, batch processing, and verdict calculation.
 """
 
 import base64
@@ -10,8 +9,10 @@ import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request
 
-# Ensure local folder is in sys.path for Gunicorn / Cloud execution
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Ensure local web_app folder is in sys.path
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 try:
     from config import DEFAULT_CONF_THRESHOLD
@@ -22,40 +23,6 @@ except ModuleNotFoundError:
 
 app = Flask(__name__)
 
-# Classes explicitly treated as non-defective
-GOOD_WELD_CLASSES = {"good_weld", "good weld", "good", "pass", "acceptable"}
-
-
-def process_verdict(detections):
-    """
-    Evaluates detections to determine overall verdict (PASS / DEFECT)
-    and extracts maximum confidence.
-    """
-    if not detections:
-        return {"verdict": "PASS", "has_defect": False, "top_confidence": 0.0}
-
-    has_defect = False
-    max_conf = 0.0
-
-    for det in detections:
-        # Normalize class label matching
-        label = str(det.get("class", "")).strip().lower()
-        conf = float(det.get("confidence", 0.0))
-        
-        if conf > max_conf:
-            max_conf = conf
-
-        # If class is NOT in good weld set, flag as defect
-        if label not in GOOD_WELD_CLASSES:
-            has_defect = True
-
-    verdict = "DEFECT" if has_defect else "PASS"
-    return {
-        "verdict": verdict,
-        "has_defect": has_defect,
-        "top_confidence": round(max_conf, 1),
-    }
-
 
 @app.route("/")
 def index():
@@ -65,8 +32,11 @@ def index():
 
 @app.route("/health", methods=["GET"])
 def health():
-    """API health check and model status route."""
-    return jsonify(get_status())
+    """API health check route expected by JavaScript."""
+    try:
+        return jsonify(get_status())
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/predict", methods=["POST"])
@@ -88,33 +58,32 @@ def predict():
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         if image is None:
-            return (
-                jsonify({"success": False, "error": "Invalid image format"}),
-                400,
-            )
+            return jsonify({"success": False, "error": "Invalid image format"}), 400
 
-        # Run ONNX / YOLO inference
         result = run_inference(image, conf_threshold=conf_threshold)
 
         if not result.get("success", False):
             return jsonify(result), 500
 
-        # Encode annotated output image to Base64
         _, buffer = cv2.imencode(".jpg", result["annotated_image"])
         encoded_image = base64.b64encode(buffer).decode("utf-8")
 
-        # Determine PASS / DEFECT status
-        verdict_data = process_verdict(result["detections"])
+        # Minimal Defect vs Good Weld classification logic
+        detections = result.get("detections", [])
+        has_defect = any(
+            str(d.get("class", "")).strip().lower() not in ["good_weld", "good weld", "good", "pass"]
+            for d in detections
+        )
+        verdict = "DEFECT" if has_defect else "PASS"
 
         return jsonify({
             "success": True,
-            "verdict": verdict_data["verdict"],
-            "has_defect": verdict_data["has_defect"],
-            "top_confidence": verdict_data["top_confidence"],
             "image": f"data:image/jpeg;base64,{encoded_image}",
-            "detections": result["detections"],
+            "detections": detections,
             "count": result["count"],
             "inference_time_ms": result["inference_time_ms"],
+            "verdict": verdict,
+            "has_defect": has_defect
         })
 
     except Exception as e:
@@ -123,14 +92,12 @@ def predict():
 
 @app.route("/predict/batch", methods=["POST"])
 def predict_batch():
-    """Multiple images batch processing route."""
+    """Batch processing route."""
     files = request.files.getlist("files")
     if not files or files[0].filename == "":
         return jsonify({"success": False, "error": "No files uploaded"}), 400
 
-    conf_threshold = float(
-        request.form.get("confidence", DEFAULT_CONF_THRESHOLD)
-    )
+    conf_threshold = float(request.form.get("confidence", DEFAULT_CONF_THRESHOLD))
     batch_results = []
 
     for file in files:
@@ -142,17 +109,20 @@ def predict_batch():
             if res.get("success", False):
                 _, buffer = cv2.imencode(".jpg", res["annotated_image"])
                 encoded = base64.b64encode(buffer).decode("utf-8")
-                verdict_data = process_verdict(res["detections"])
+
+                has_defect = any(
+                    str(d.get("class", "")).strip().lower() not in ["good_weld", "good weld", "good", "pass"]
+                    for d in res.get("detections", [])
+                )
 
                 batch_results.append({
                     "filename": file.filename,
-                    "verdict": verdict_data["verdict"],
-                    "has_defect": verdict_data["has_defect"],
-                    "top_confidence": verdict_data["top_confidence"],
                     "image": f"data:image/jpeg;base64,{encoded}",
                     "detections": res["detections"],
                     "count": res["count"],
                     "inference_time_ms": res["inference_time_ms"],
+                    "verdict": "DEFECT" if has_defect else "PASS",
+                    "has_defect": has_defect
                 })
 
     return jsonify({
