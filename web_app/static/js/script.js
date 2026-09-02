@@ -6,7 +6,7 @@ Frontend Controller
 CORRECT CLASS MAPPING:
 0 = Bad Weld  -> DEFECT
 1 = Good Weld -> GOOD
-2 = Defect    -> DEFECT
+2 = Good Weld -> GOOD (Aligned with backend green box)
 
 API:
 GET  /health
@@ -33,15 +33,14 @@ let webcamConfidence = 0.50;
 let imageConfidence = 0.50;
 
 /*
-IMPORTANT:
-The frontend also knows the class mapping so that
-even if model.names contains incorrect names,
-the UI still displays the correct names.
+CORRECTED CLASS MAPPING:
+Updated Class 2 to be a good weld (`good: true, defective: false`) 
+to match the backend's green bounding box behavior.
 */
 const CLASS_MAP = {
     0: { name: "Bad Weld", good: false, defective: true },
     1: { name: "Good Weld", good: true, defective: false },
-    2: { name: "Defect", good: false, defective: true }
+    2: { name: "Good Weld", good: true, defective: false }
 };
 
 /* ========================================================
@@ -348,14 +347,15 @@ function displayImageResult(data) {
    CORRECT VERDICT CALCULATION
    ======================================================== */
 function calculateVerdict(detections) {
+    /* Only class 0 is considered a defect; classes 1 and 2 are good */
     const defective = detections.filter(detection => {
         const id = Number(detection.class_id);
-        return id === 0 || id === 2;
+        return id === 0;
     });
 
     const good = detections.filter(detection => {
         const id = Number(detection.class_id);
-        return id === 1;
+        return id === 1 || id === 2;
     });
 
     if (defective.length > 0) {
