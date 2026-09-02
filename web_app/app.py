@@ -1,6 +1,6 @@
 """
 app.py — Flask REST API Server for WeldVision AI.
-Handles UI rendering, image uploads, batch inference, and API endpoints.
+Handles UI rendering, single image inference, batch processing, and verdict calculation.
 """
 
 import base64
@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request
 
-# Ensure local folder is in sys.path for Gunicorn / Render execution
+# Ensure local folder is in sys.path for Gunicorn / Cloud execution
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
@@ -21,6 +21,40 @@ except ModuleNotFoundError:
     from web_app.model_service import get_status, run_inference
 
 app = Flask(__name__)
+
+# Classes explicitly treated as non-defective
+GOOD_WELD_CLASSES = {"good_weld", "good weld", "good", "pass", "acceptable"}
+
+
+def process_verdict(detections):
+    """
+    Evaluates detections to determine overall verdict (PASS / DEFECT)
+    and extracts maximum confidence.
+    """
+    if not detections:
+        return {"verdict": "PASS", "has_defect": False, "top_confidence": 0.0}
+
+    has_defect = False
+    max_conf = 0.0
+
+    for det in detections:
+        # Normalize class label matching
+        label = str(det.get("class", "")).strip().lower()
+        conf = float(det.get("confidence", 0.0))
+        
+        if conf > max_conf:
+            max_conf = conf
+
+        # If class is NOT in good weld set, flag as defect
+        if label not in GOOD_WELD_CLASSES:
+            has_defect = True
+
+    verdict = "DEFECT" if has_defect else "PASS"
+    return {
+        "verdict": verdict,
+        "has_defect": has_defect,
+        "top_confidence": round(max_conf, 1),
+    }
 
 
 @app.route("/")
@@ -46,12 +80,10 @@ def predict():
         return jsonify({"success": False, "error": "No selected file"}), 400
 
     try:
-        # Fetch confidence threshold from request if provided
         conf_threshold = float(
             request.form.get("confidence", DEFAULT_CONF_THRESHOLD)
         )
 
-        # Read image file into OpenCV array
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
@@ -61,18 +93,24 @@ def predict():
                 400,
             )
 
-        # Run ONNX inference
+        # Run ONNX / YOLO inference
         result = run_inference(image, conf_threshold=conf_threshold)
 
-        if not result["success"]:
+        if not result.get("success", False):
             return jsonify(result), 500
 
-        # Encode annotated output image to Base64 format for HTML rendering
+        # Encode annotated output image to Base64
         _, buffer = cv2.imencode(".jpg", result["annotated_image"])
         encoded_image = base64.b64encode(buffer).decode("utf-8")
 
+        # Determine PASS / DEFECT status
+        verdict_data = process_verdict(result["detections"])
+
         return jsonify({
             "success": True,
+            "verdict": verdict_data["verdict"],
+            "has_defect": verdict_data["has_defect"],
+            "top_confidence": verdict_data["top_confidence"],
             "image": f"data:image/jpeg;base64,{encoded_image}",
             "detections": result["detections"],
             "count": result["count"],
@@ -101,12 +139,16 @@ def predict_batch():
 
         if image is not None:
             res = run_inference(image, conf_threshold=conf_threshold)
-            if res["success"]:
+            if res.get("success", False):
                 _, buffer = cv2.imencode(".jpg", res["annotated_image"])
                 encoded = base64.b64encode(buffer).decode("utf-8")
+                verdict_data = process_verdict(res["detections"])
 
                 batch_results.append({
                     "filename": file.filename,
+                    "verdict": verdict_data["verdict"],
+                    "has_defect": verdict_data["has_defect"],
+                    "top_confidence": verdict_data["top_confidence"],
                     "image": f"data:image/jpeg;base64,{encoded}",
                     "detections": res["detections"],
                     "count": res["count"],

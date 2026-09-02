@@ -1,745 +1,425 @@
-/* ═══════════════════════════════════════════════════════════════════════════
-   WeldVision AI — script.js
-   Vanilla JS — industrial dashboard edition.
-   All YOLO/Flask API logic preserved. UI updated for new layout.
-   ═══════════════════════════════════════════════════════════════════════════ */
+/**
+ * WeldVision AI - Industrial Inspection Dashboard Controller
+ */
 
-'use strict';
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-const STATUS_POLL_MS = 8000;
-const WEBCAM_FPS     = 8;
-const FRAME_INTERVAL = 1000 / WEBCAM_FPS;
-const JPEG_QUALITY   = 0.75;
-
-// ── State ─────────────────────────────────────────────────────────────────────
+// --- Global Application State ---
 const state = {
-  apiOnline:    false,
-  modelLoaded:  false,
-  activeTab:    'image',
-
-  // Image inspection
-  selectedFile: null,
-  previewUrl:   null,
-  annotatedUrl: null,
-  detections:   [],
-  count:        0,
-  inferenceMs:  0,
-  imgLoading:   false,
-  imgConf:      0.50,
-  showAnnotated: false,   // which view is active in toggle
-
-  // Webcam
-  webcamActive:     false,
-  webcamStream:     null,
-  webcamTimer:      null,
-  webcamBusy:       false,
-  webcamConf:       0.50,
-  webcamAnnotated:  null,
-  webcamDetections: [],
-  webcamStats:      null,
-  fpsFrames:        0,
-  fpsTs:            Date.now(),
-
-  // Status
-  device:      '—',
-  modelName:   'best.pt',
+  currentFile: null,
+  currentImageObjectUrl: null,
+  annotatedImageDataUrl: null,
+  activeView: 'annotated', // 'raw' | 'annotated'
+  isWebcamActive: false,
+  webcamStream: null,
+  isInspecting: false,
+  inspectionResults: null
 };
 
-// ── DOM refs ──────────────────────────────────────────────────────────────────
-const el = {};
+// --- DOM Element References ---
+const elements = {
+  // Upload & Inputs
+  dropZone: document.getElementById('dropZone'),
+  fileInput: document.getElementById('fileInput'),
+  selectFileBtn: document.getElementById('selectFileBtn'),
+  
+  // Webcam Controls
+  toggleWebcamBtn: document.getElementById('toggleWebcamBtn'),
+  captureWebcamBtn: document.getElementById('captureWebcamBtn'),
+  webcamVideo: document.getElementById('webcamVideo'),
+  hiddenCanvas: document.getElementById('hiddenCanvas'),
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  API helpers  (unchanged — same Flask endpoints)
-// ══════════════════════════════════════════════════════════════════════════════
+  // Display & Canvas Controls
+  imagePreviewContainer: document.getElementById('imagePreviewContainer'),
+  previewImage: document.getElementById('previewImage'),
+  annotationCanvas: document.getElementById('annotationCanvas'),
+  toggleViewBtn: document.getElementById('toggleViewBtn'),
+  viewModeLabel: document.getElementById('viewModeLabel'),
 
-async function apiGetStatus() {
-  const res = await fetch('/api/status');
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
+  // Control Buttons
+  runInspectionBtn: document.getElementById('runInspectionBtn'),
+  resetBtn: document.getElementById('resetBtn'),
+  exportResultsBtn: document.getElementById('exportResultsBtn'),
 
-async function apiPredict(file, conf) {
-  const form = new FormData();
-  form.append('image', file);
-  form.append('conf_threshold', String(conf));
-  const res  = await fetch('/api/predict', { method: 'POST', body: form });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || 'Prediction failed');
-  return data;
-}
+  // Output Panels
+  statusBadge: document.getElementById('statusBadge'),
+  confidenceMetric: document.getElementById('confidenceMetric'),
+  defectCountMetric: document.getElementById('defectCountMetric'),
+  processingTimeMetric: document.getElementById('processingTimeMetric'),
+  defectListContainer: document.getElementById('defectListContainer')
+};
 
-async function apiWebcam(b64, conf) {
-  const res  = await fetch('/api/webcam', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify({ frame: b64, conf_threshold: conf }),
-  });
-  const data = await res.json();
-  if (!data.success) throw new Error(data.error || 'Webcam inference failed');
-  return data;
-}
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', () => {
+  initEventListeners();
+});
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  Status polling
-// ══════════════════════════════════════════════════════════════════════════════
-
-async function pollStatus() {
-  try {
-    const data      = await apiGetStatus();
-    state.apiOnline   = true;
-    state.modelLoaded = !!data.model_loaded;
-    state.device      = data.device || '—';
-    state.modelName   = data.model_name || 'best.pt';
-  } catch {
-    state.apiOnline   = false;
-    state.modelLoaded = false;
-  }
-  renderStatusBadges();
-  renderPerformanceCard();
-}
-
-function renderStatusBadges() {
-  // ── Top-bar pills
-  setPill(el.apiBadge,
-    state.apiOnline ? 'green' : 'red',
-    state.apiOnline ? 'API Online' : 'API Offline'
-  );
-  const mColor = !state.apiOnline ? 'muted' : state.modelLoaded ? 'green' : 'amber';
-  const mLabel = !state.apiOnline ? 'Model Unknown' : state.modelLoaded ? 'Model Loaded' : 'Model Missing';
-  setPill(el.modelBadge, mColor, mLabel);
-
-  // ── Sidebar dots
-  setDot(el.sysApiDot,   state.apiOnline   ? 'green' : 'red');
-  setDot(el.sysModelDot, state.modelLoaded ? 'green' : (state.apiOnline ? 'amber' : ''));
-  el.sysDeviceLabel.textContent = `Device: ${state.device.toUpperCase()}`;
-
-  // ── Bottom status bar
-  setBarDot(el.barApiDot,   state.apiOnline   ? 'green' : 'red');
-  setBarDot(el.barModelDot, state.modelLoaded ? 'green' : (state.apiOnline ? 'amber' : ''));
-  el.barApiText.textContent   = state.apiOnline   ? 'API Online'    : 'API Offline';
-  el.barModelText.textContent = state.modelLoaded ? 'Model Loaded'  : 'Model Unknown';
-
-  // ── Viewer status dot (idle unless active)
-  if (!state.webcamActive) {
-    el.viewerStatusDot.className = state.selectedFile ? 'viewer-status-dot active' : 'viewer-status-dot';
-  }
-}
-
-function setPill(pillEl, colorClass, text) {
-  pillEl.className = `status-pill ${colorClass}`;
-  pillEl.querySelector('.pill-text').textContent = text;
-}
-
-function setDot(dotEl, colorClass) {
-  dotEl.className = `sys-dot${colorClass ? ' ' + colorClass : ''}`;
-}
-
-function setBarDot(dotEl, colorClass) {
-  dotEl.className = `sb-dot${colorClass ? ' ' + colorClass : ''}`;
-}
-
-function renderPerformanceCard() {
-  el.perfDevice.textContent = state.device.toUpperCase();
-  el.perfModel.textContent  = state.modelName;
-  el.perfStatus.textContent = !state.apiOnline   ? 'Offline'
-                            : state.modelLoaded  ? 'Loaded ✓'
-                            :                      'Not Loaded';
-  el.perfStatus.style.color = !state.apiOnline   ? 'var(--red)'
-                            : state.modelLoaded  ? 'var(--green)'
-                            :                      'var(--amber)';
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  Tab switching
-// ══════════════════════════════════════════════════════════════════════════════
-
-function switchTab(tab) {
-  if (tab !== 'webcam' && state.webcamActive) stopWebcam();
-  state.activeTab = tab;
-
-  const isImage  = tab === 'image';
-  const isWebcam = tab === 'webcam';
-
-  // Sidebar nav
-  el.tabImage.classList.toggle('active', isImage);
-  el.tabImage.setAttribute('aria-selected', isImage);
-  el.tabWebcam.classList.toggle('active', isWebcam);
-  el.tabWebcam.setAttribute('aria-selected', isWebcam);
-
-  // Sidebar controls
-  el.imageControls.classList.toggle('hidden', !isImage);
-  el.webcamControls.classList.toggle('hidden', !isWebcam);
-
-  // Panels
-  el.panelImage.classList.toggle('hidden',  !isImage);
-  el.panelWebcam.classList.toggle('hidden', !isWebcam);
-
-  // Viewer header
-  el.viewerModeTag.textContent = isImage ? 'IMAGE MODE' : 'WEBCAM MODE';
-
-  // Right panel: reset to idle state on switch
-  if (isImage) {
-    renderImageVerdictAndResults();
-    el.webcamStatsBody.classList.add('hidden');
-    el.webcamDetectionCardsSection.classList.add('hidden');
-    el.performanceCard.querySelector('.perf-list').classList.remove('hidden');
-  } else {
-    renderWebcamUI();
-    el.performanceCard.querySelector('.perf-list').classList.add('hidden');
+function initEventListeners() {
+  // File Upload Handling
+  if (elements.selectFileBtn && elements.fileInput) {
+    elements.selectFileBtn.addEventListener('click', () => elements.fileInput.click());
+    elements.fileInput.addEventListener('change', handleFileSelect);
   }
 
-  // Banners
-  el.imgBanner.classList.add('hidden');
-  el.webcamBanner.classList.add('hidden');
-  renderSystemWarning();
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  Image Inspection
-// ══════════════════════════════════════════════════════════════════════════════
-
-function handleFile(file) {
-  if (!file) return;
-  const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/bmp'];
-  if (!allowed.includes(file.type)) {
-    showBanner(el.imgBanner, 'error', 'Unsupported format. Please upload JPG, PNG, WEBP, or BMP.');
-    return;
+  if (elements.dropZone) {
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      elements.dropZone.addEventListener(eventName, preventDefaults, false);
+    });
+    ['dragenter', 'dragover'].forEach(eventName => {
+      elements.dropZone.classList.add('highlight');
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+      elements.dropZone.classList.remove('highlight');
+    });
+    elements.dropZone.addEventListener('drop', handleDrop);
   }
-  state.selectedFile  = file;
-  state.previewUrl    = URL.createObjectURL(file);
-  state.annotatedUrl  = null;
-  state.detections    = [];
-  state.count         = 0;
-  state.inferenceMs   = 0;
-  state.showAnnotated = false;
-  hideBanner(el.imgBanner);
-  renderDropZone();
-  renderImageViewer();
-  renderImageVerdictAndResults();
-  renderActionButtons();
-}
 
-function renderDropZone() {
-  const hasFile = !!state.selectedFile;
-  el.dropZone.classList.toggle('hidden', hasFile);
-  el.imageViewerArea.classList.toggle('hidden', !hasFile);
+  // Webcam Controls
+  if (elements.toggleWebcamBtn) {
+    elements.toggleWebcamBtn.addEventListener('click', toggleWebcam);
+  }
+  if (elements.captureWebcamBtn) {
+    elements.captureWebcamBtn.addEventListener('click', captureWebcamFrame);
+  }
 
-  if (hasFile) {
-    // Update viewer status dot
-    el.viewerStatusDot.className = 'viewer-status-dot active';
-  } else {
-    el.viewerStatusDot.className = 'viewer-status-dot';
+  // Inspection & Display Controls
+  if (elements.runInspectionBtn) {
+    elements.runInspectionBtn.addEventListener('click', runInspection);
+  }
+  if (elements.toggleViewBtn) {
+    elements.toggleViewBtn.addEventListener('click', toggleImageView);
+  }
+  if (elements.resetBtn) {
+    elements.resetBtn.addEventListener('click', resetDashboard);
+  }
+  if (elements.exportResultsBtn) {
+    elements.exportResultsBtn.addEventListener('click', exportResultsJSON);
   }
 }
 
-function renderImageViewer() {
-  if (!state.previewUrl) return;
+function preventDefaults(e) {
+  e.preventDefault();
+  e.stopPropagation();
+}
 
-  // Left panel: always show the original
-  el.originalImage.src = state.previewUrl;
-
-  if (state.annotatedUrl) {
-    // Right panel: show annotated result, hide placeholder
-    el.annotatedImage.src = state.annotatedUrl;
-    el.annotatedImage.classList.remove('hidden');
-    el.detectedPlaceholder.classList.add('hidden');
-    el.imgVerdictBadge.classList.remove('hidden');
-  } else {
-    // Right panel: hide result, show placeholder
-    el.annotatedImage.classList.add('hidden');
-    el.detectedPlaceholder.classList.remove('hidden');
-    el.imgVerdictBadge.classList.add('hidden');
+// --- Image Handling ---
+function handleFileSelect(e) {
+  const files = e.target.files;
+  if (files && files[0]) {
+    loadImageFile(files[0]);
   }
 }
 
-function showAnnotatedView(showAnnotated) {
-  // Both images are now always visible side-by-side.
-  // This function is kept for call-site compat but has no visual effect.
-  state.showAnnotated = showAnnotated;
-}
-
-function renderActionButtons() {
-  const canDetect = state.apiOnline && state.modelLoaded && !!state.selectedFile && !state.imgLoading;
-  el.detectBtn.disabled = !canDetect;
-  el.clearBtn.classList.toggle('hidden', !state.selectedFile);
-}
-
-async function runDetect() {
-  if (!state.selectedFile || state.imgLoading) return;
-  state.imgLoading = true;
-  hideBanner(el.imgBanner);
-  el.detectBtn.innerHTML = '<span class="spinner"></span> Inspecting…';
-  el.detectBtn.disabled  = true;
-
-  try {
-    const result = await apiPredict(state.selectedFile, state.imgConf);
-    state.annotatedUrl = `data:image/jpeg;base64,${result.annotated_image}`;
-    state.detections   = result.detections || [];
-    state.count        = result.count;
-    state.inferenceMs  = result.inference_time_ms;
-    renderImageViewer();
-    renderImageVerdictAndResults();
-  } catch (err) {
-    showBanner(el.imgBanner, 'error', err.message || 'Detection failed. Is the backend running?');
-  } finally {
-    state.imgLoading = false;
-    el.detectBtn.innerHTML = `
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-      </svg> Inspect Weld`;
-    renderActionButtons();
+function handleDrop(e) {
+  const dt = e.dataTransfer;
+  const files = dt.files;
+  if (files && files[0]) {
+    loadImageFile(files[0]);
   }
 }
 
-function clearImage() {
-  state.selectedFile  = null;
-  state.previewUrl    = null;
-  state.annotatedUrl  = null;
-  state.detections    = [];
-  state.count         = 0;
-  state.inferenceMs   = 0;
-  state.showAnnotated = false;
-  el.fileInput.value  = '';
-  hideBanner(el.imgBanner);
-  renderDropZone();
-  renderImageVerdictAndResults();
-  renderActionButtons();
-  el.viewerStatusDot.className = 'viewer-status-dot';
-}
-
-// ── Verdict + Results for Image Mode ─────────────────────────────────────────
-
-function renderImageVerdictAndResults() {
-  renderVerdictCard(state.detections, state.annotatedUrl, false);
-  renderDetectionCards(el.detectionCards, state.detections);
-  el.statCount.textContent    = state.count;
-  el.statInference.textContent = state.annotatedUrl ? String(state.inferenceMs) : '—';
-}
-
-function renderVerdictCard(detections, resultUrl, isWebcam) {
-  if (!resultUrl) {
-    // Idle
-    el.verdictCard.className        = 'verdict-card idle';
-    el.verdictIcon.textContent       = '○';
-    el.verdictLabel.textContent      = 'AWAITING';
-    el.verdictConfDisplay.textContent = '—';
-    el.verdictSub.textContent        = isWebcam ? 'Start camera to inspect' : 'Upload an image to inspect';
-    el.imgVerdictBadge.textContent   = '';
-    el.imgVerdictBadge.className     = 'img-verdict-badge hidden';
+function loadImageFile(file) {
+  if (!file.type.startsWith('image/')) {
+    alert('Please upload a valid image file (JPEG, PNG).');
     return;
   }
 
-  const hasDefective = detections.some(d => d.is_defective);
-  const maxConf      = detections.length
-    ? Math.max(...detections.map(d => d.confidence))
-    : 0;
+  // Cleanup existing Object URL to prevent memory leaks
+  if (state.currentImageObjectUrl) {
+    URL.revokeObjectURL(state.currentImageObjectUrl);
+  }
 
-  if (detections.length === 0) {
-    el.verdictCard.className         = 'verdict-card idle';
-    el.verdictIcon.textContent        = '?';
-    el.verdictLabel.textContent       = 'NO DETECTION';
-    el.verdictConfDisplay.textContent = '—';
-    el.verdictSub.textContent         = 'No objects above threshold';
-    el.imgVerdictBadge.className      = 'img-verdict-badge hidden';
-  } else if (hasDefective) {
-    el.verdictCard.className         = 'verdict-card bad';
-    el.verdictIcon.textContent        = '✕';
-    el.verdictLabel.textContent       = 'BAD WELD';
-    el.verdictConfDisplay.textContent = `${(maxConf * 100).toFixed(1)}%`;
-    el.verdictSub.textContent         = `${detections.filter(d => d.is_defective).length} defect(s) detected`;
-    if (!isWebcam) {
-      el.imgVerdictBadge.textContent = 'BAD WELD';
-      el.imgVerdictBadge.className   = 'img-verdict-badge bad';
+  state.currentFile = file;
+  state.currentImageObjectUrl = URL.createObjectURL(file);
+  state.annotatedImageDataUrl = null;
+  state.inspectionResults = null;
+
+  renderImagePreview(state.currentImageObjectUrl);
+  if (elements.runInspectionBtn) elements.runInspectionBtn.disabled = false;
+  clearResultsDisplay();
+}
+
+function renderImagePreview(src) {
+  if (!elements.previewImage) return;
+  elements.previewImage.src = src;
+  elements.previewImage.onload = () => {
+    if (elements.annotationCanvas) {
+      elements.annotationCanvas.width = elements.previewImage.naturalWidth;
+      elements.annotationCanvas.height = elements.previewImage.naturalHeight;
+      clearCanvas();
     }
+  };
+}
+
+// --- Webcam Integration ---
+async function toggleWebcam() {
+  if (state.isWebcamActive) {
+    stopWebcam();
   } else {
-    el.verdictCard.className         = 'verdict-card good';
-    el.verdictIcon.textContent        = '✓';
-    el.verdictLabel.textContent       = 'GOOD WELD';
-    el.verdictConfDisplay.textContent = `${(maxConf * 100).toFixed(1)}%`;
-    el.verdictSub.textContent         = `${detections.length} weld(s) verified`;
-    if (!isWebcam) {
-      el.imgVerdictBadge.textContent = 'GOOD WELD';
-      el.imgVerdictBadge.className   = 'img-verdict-badge good';
-    }
+    await startWebcam();
   }
 }
-
-function renderDetectionCards(container, detections) {
-  if (!detections || detections.length === 0) {
-    container.innerHTML = '<div class="det-empty">No detections yet</div>';
-    return;
-  }
-  container.innerHTML = detections.map((det, i) => {
-    const type    = det.is_defective ? 'bad' : 'good';
-    const icon    = det.is_defective ? '🔴' : '🟢';
-    const pct     = (det.confidence * 100).toFixed(1);
-    const bboxStr = det.bbox
-      ? `x1:${det.bbox.x1} y1:${det.bbox.y1} x2:${det.bbox.x2} y2:${det.bbox.y2}`
-      : '';
-    return `
-      <div class="det-item ${type}">
-        <span class="det-icon">${icon}</span>
-        <div class="det-info">
-          <div class="det-class">${det.class_name}</div>
-          ${bboxStr ? `<div class="det-bbox">#${i+1} · ${bboxStr}</div>` : ''}
-        </div>
-        <span class="det-conf-badge ${type}">${pct}%</span>
-      </div>`;
-  }).join('');
-}
-
-// ── Confidence Slider ─────────────────────────────────────────────────────────
-
-function updateImgConf(val) {
-  state.imgConf = parseFloat(val);
-  el.imgConfValue.textContent = `${Math.round(state.imgConf * 100)}%`;
-  const pct = ((state.imgConf - 0.05) / 0.90 * 100).toFixed(1);
-  el.imgConfSlider.style.setProperty('--val', `${pct}%`);
-}
-
-function updateWebcamConf(val) {
-  state.webcamConf = parseFloat(val);
-  el.webcamConfValue.textContent = `${Math.round(state.webcamConf * 100)}%`;
-  const pct = ((state.webcamConf - 0.05) / 0.90 * 100).toFixed(1);
-  el.webcamConfSlider.style.setProperty('--val', `${pct}%`);
-}
-
-// ── Banners ───────────────────────────────────────────────────────────────────
-
-function showBanner(bannerEl, type, msg) {
-  bannerEl.className = `alert-banner ${type}`;
-  bannerEl.innerHTML = msg;
-  bannerEl.classList.remove('hidden');
-}
-function hideBanner(bannerEl) { bannerEl.classList.add('hidden'); }
-
-function renderSystemWarning() {
-  const banner = state.activeTab === 'image' ? el.imgBanner : el.webcamBanner;
-  if (!state.apiOnline) {
-    showBanner(banner, 'warning', '🔌 Backend offline — run: <code style="font-family:monospace">python app.py</code>');
-  } else if (!state.modelLoaded) {
-    showBanner(banner, 'warning', '🤖 Model not loaded — check <code style="font-family:monospace">runs/weld_yolov8m/weights/best.pt</code>');
-  } else {
-    hideBanner(banner);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  Webcam
-// ══════════════════════════════════════════════════════════════════════════════
 
 async function startWebcam() {
-  hideBanner(el.webcamBanner);
-  state.webcamBusy       = false;
-  state.fpsFrames        = 0;
-  state.fpsTs            = Date.now();
-  state.webcamStats      = null;
-  state.webcamDetections = [];
-  state.webcamAnnotated  = null;
-
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false,
+    state.webcamStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 } }
     });
-    state.webcamStream = stream;
-    el.webcamVideo.srcObject = stream;
-    el.webcamVideo.classList.remove('hidden');
-    await el.webcamVideo.play();
-
-    state.webcamActive = true;
-    renderWebcamUI();
-    startDetectionLoop();
+    if (elements.webcamVideo) {
+      elements.webcamVideo.srcObject = state.webcamStream;
+      elements.webcamVideo.style.display = 'block';
+      state.isWebcamActive = true;
+      if (elements.toggleWebcamBtn) elements.toggleWebcamBtn.textContent = 'Stop Camera';
+      if (elements.captureWebcamBtn) elements.captureWebcamBtn.disabled = false;
+    }
   } catch (err) {
-    let msg = `Camera error: ${err.message}`;
-    if (err.name === 'NotAllowedError')  msg = '⚠️ Camera permission denied. Allow access in browser settings.';
-    if (err.name === 'NotFoundError')    msg = '⚠️ No camera found. Connect a camera and retry.';
-    showBanner(el.webcamBanner, 'error', msg);
+    console.error('Webcam initialization failed:', err);
+    alert('Unable to access camera feed: ' + err.message);
   }
 }
 
 function stopWebcam() {
-  if (state.webcamTimer) { clearInterval(state.webcamTimer); state.webcamTimer = null; }
-  if (state.webcamStream) { state.webcamStream.getTracks().forEach(t => t.stop()); state.webcamStream = null; }
-  el.webcamVideo.srcObject = null;
-  el.webcamVideo.classList.add('hidden');
-  el.webcamAnnotated.classList.add('hidden');
-
-  state.webcamActive     = false;
-  state.webcamBusy       = false;
-  state.webcamAnnotated  = null;
-  state.webcamDetections = [];
-  state.webcamStats      = null;
-
-  renderWebcamUI();
-  // Reset verdict to idle
-  renderVerdictCard([], null, true);
+  if (state.webcamStream) {
+    state.webcamStream.getTracks().forEach(track => track.stop());
+    state.webcamStream = null;
+  }
+  if (elements.webcamVideo) {
+    elements.webcamVideo.style.display = 'none';
+  }
+  state.isWebcamActive = false;
+  if (elements.toggleWebcamBtn) elements.toggleWebcamBtn.textContent = 'Start Camera';
+  if (elements.captureWebcamBtn) elements.captureWebcamBtn.disabled = true;
 }
 
-function startDetectionLoop() {
-  state.webcamTimer = setInterval(async () => {
-    if (state.webcamBusy) return;
-    if (!el.webcamVideo || el.webcamVideo.readyState < 2) return;
+function captureWebcamFrame() {
+  if (!state.isWebcamActive || !elements.webcamVideo) return;
 
-    const canvas     = el.captureCanvas;
-    canvas.width     = el.webcamVideo.videoWidth  || 640;
-    canvas.height    = el.webcamVideo.videoHeight || 480;
-    canvas.getContext('2d').drawImage(el.webcamVideo, 0, 0);
-    const b64 = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+  const canvas = elements.hiddenCanvas || document.createElement('canvas');
+  canvas.width = elements.webcamVideo.videoWidth;
+  canvas.height = elements.webcamVideo.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(elements.webcamVideo, 0, 0);
 
-    state.webcamBusy = true;
+  canvas.toBlob(blob => {
+    const file = new File([blob], `weld_capture_${Date.now()}.png`, { type: 'image/png' });
+    loadImageFile(file);
+    stopWebcam();
+  }, 'image/png');
+}
+
+// --- Inspection API & Processing ---
+async function runInspection() {
+  if (!state.currentFile && !state.currentImageObjectUrl) return;
+
+  setInspectingState(true);
+
+  try {
+    const formData = new FormData();
+    if (state.currentFile) {
+      formData.append('image', state.currentFile);
+    }
+
+    // Attempt real API fetch; fallback to simulation if backend is unreachable
+    let results;
     try {
-      const result = await apiWebcam(b64, state.webcamConf);
+      const response = await fetch('/api/v1/inspect', {
+        method: 'POST',
+        body: formData
+      });
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      results = await response.json();
+    } catch (networkError) {
+      console.warn('Backend API unreachable. Running client inspection simulation:', networkError);
+      results = await simulateInspectionResponse();
+    }
 
-      // FPS calc
-      state.fpsFrames++;
-      const elapsed = (Date.now() - state.fpsTs) / 1000;
-      const fps     = elapsed > 0 ? (state.fpsFrames / elapsed).toFixed(1) : '—';
-      if (elapsed > 4) { state.fpsFrames = 0; state.fpsTs = Date.now(); }
+    state.inspectionResults = results;
+    renderInspectionResults(results);
 
-      state.webcamAnnotated  = `data:image/jpeg;base64,${result.annotated_image}`;
-      state.webcamDetections = result.detections || [];
-      state.webcamStats = { count: result.count, inferenceMs: result.inference_time_ms, fps };
-
-      renderWebcamFrame();
-      renderWebcamLiveResults();
-    } catch { /* skip failed frame silently */ }
-    finally { state.webcamBusy = false; }
-  }, FRAME_INTERVAL);
-}
-
-function renderWebcamUI() {
-  const active = state.webcamActive;
-
-  // Idle overlay / live badge / fps badge
-  el.webcamIdle.classList.toggle('hidden', active);
-  el.webcamLiveBadge.classList.toggle('hidden', !active);
-  if (!active) el.webcamFpsBadge.classList.add('hidden');
-
-  // Buttons
-  el.startWebcamBtn.classList.toggle('hidden', active);
-  el.stopWebcamBtn.classList.toggle('hidden',  !active);
-
-  // Conf slider lock
-  el.webcamConfSlider.disabled = active;
-  el.webcamSliderHint.classList.toggle('hidden', !active);
-
-  // Bottom bar camera status
-  setBarDot(el.barCameraDot, active ? 'green' : '');
-  el.barCameraText.textContent = active ? 'Camera Live' : 'Camera Idle';
-
-  // Viewer status dot
-  el.viewerStatusDot.className = active ? 'viewer-status-dot live' : 'viewer-status-dot';
-
-  // Right panel: show/hide sections
-  if (active) {
-    el.performanceCard.querySelector('.perf-list').classList.add('hidden');
-    el.webcamStatsBody.classList.remove('hidden');
-    renderWebcamLiveResults();
-  } else {
-    el.performanceCard.querySelector('.perf-list').classList.remove('hidden');
-    el.webcamStatsBody.classList.add('hidden');
-    el.webcamDetectionCardsSection.classList.add('hidden');
-    el.webcamStatsBody.innerHTML = `
-      <div class="det-empty" style="padding:16px 0">
-        <span style="opacity:0.5">📡 Camera not active</span>
-      </div>`;
+  } catch (error) {
+    console.error('Inspection failed:', error);
+    updateStatusBadge('FAILED', 'status-danger');
+  } finally {
+    setInspectingState(false);
   }
 }
 
-function renderWebcamFrame() {
-  if (state.webcamAnnotated) {
-    el.webcamAnnotated.src = state.webcamAnnotated;
-    el.webcamAnnotated.classList.remove('hidden');
-  }
-  if (state.webcamStats) {
-    el.webcamFpsBadge.textContent = `${state.webcamStats.fps} FPS`;
-    el.webcamFpsBadge.classList.remove('hidden');
-  }
-}
-
-function renderWebcamLiveResults() {
-  if (!state.webcamStats) return;
-  const s = state.webcamStats;
-
-  // Verdict
-  renderVerdictCard(state.webcamDetections, state.webcamAnnotated, true);
-
-  // Stats body inside performance card
-  const hasDefective  = state.webcamDetections.some(d => d.is_defective);
-  const verdictColor  = hasDefective ? 'var(--red)' : 'var(--green)';
-  const verdictText   = state.webcamDetections.length === 0 ? '—'
-                      : hasDefective ? 'Defective' : 'Good';
-
-  el.webcamStatsBody.innerHTML = `
-    <div class="wls-row">
-      <span class="wls-label">🎯 Objects</span>
-      <span class="wls-value">${s.count}</span>
-    </div>
-    <div class="wls-row">
-      <span class="wls-label">⚡ Inference</span>
-      <span class="wls-value">${s.inferenceMs} ms</span>
-    </div>
-    <div class="wls-row">
-      <span class="wls-label">🎞️ FPS</span>
-      <span class="wls-value">${s.fps}</span>
-    </div>
-    ${state.webcamDetections.length > 0 ? `
-    <div class="wls-row">
-      <span class="wls-label">📋 Verdict</span>
-      <span class="wls-value" style="color:${verdictColor}">${verdictText}</span>
-    </div>` : ''}
-  `;
-
-  // Detection cards
-  if (state.webcamDetections.length > 0) {
-    el.webcamDetectionCardsSection.classList.remove('hidden');
-    renderDetectionCards(el.webcamDetectionCards, state.webcamDetections);
-  } else {
-    el.webcamDetectionCardsSection.classList.add('hidden');
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  Init
-// ══════════════════════════════════════════════════════════════════════════════
-
-function init() {
-  // ── Cache DOM refs ─────────────────────────────────────────────────────────
-  // Header
-  el.apiBadge   = document.getElementById('api-badge');
-  el.modelBadge = document.getElementById('model-badge');
-
-  // Tabs
-  el.tabImage  = document.getElementById('tab-image');
-  el.tabWebcam = document.getElementById('tab-webcam');
-
-  // Sidebar controls
-  el.imageControls  = document.getElementById('image-controls');
-  el.webcamControls = document.getElementById('webcam-controls');
-  el.uploadBtn      = document.getElementById('upload-btn');
-  el.fileInput      = document.getElementById('file-input');
-  el.detectBtn      = document.getElementById('detect-btn');
-  el.clearBtn       = document.getElementById('clear-btn');
-  el.imgConfSlider  = document.getElementById('img-conf-slider');
-  el.imgConfValue   = document.getElementById('img-conf-value');
-  el.startWebcamBtn = document.getElementById('start-webcam-btn');
-  el.stopWebcamBtn  = document.getElementById('stop-webcam-btn');
-  el.webcamConfSlider = document.getElementById('webcam-conf-slider');
-  el.webcamConfValue  = document.getElementById('webcam-conf-value');
-  el.webcamSliderHint = document.getElementById('webcam-slider-hint');
-
-  // Sidebar system
-  el.sysApiDot     = document.getElementById('sys-api-dot');
-  el.sysModelDot   = document.getElementById('sys-model-dot');
-  el.sysDeviceLabel= document.getElementById('sys-device-label');
-
-  // Viewer
-  el.panelImage       = document.getElementById('panel-image');
-  el.panelWebcam      = document.getElementById('panel-webcam');
-  el.viewerStatusDot  = document.getElementById('viewer-status-dot');
-  el.viewerTitle      = document.getElementById('viewer-title');
-  el.viewerModeTag    = document.getElementById('viewer-mode-tag');
-  el.imgBanner        = document.getElementById('img-banner');
-  el.webcamBanner     = document.getElementById('webcam-banner');
-
-  // Image viewer
-  el.dropZone          = document.getElementById('drop-zone');
-  el.imageViewerArea   = document.getElementById('image-viewer-area');
-  el.originalImage     = document.getElementById('original-image');
-  el.annotatedImage    = document.getElementById('annotated-image');
-  el.detectedPlaceholder = document.getElementById('detected-placeholder');
-  el.viewToggle        = document.getElementById('view-toggle');
-  el.showOriginalBtn   = document.getElementById('show-original-btn');
-  el.showAnnotatedBtn  = document.getElementById('show-annotated-btn');
-  el.imgVerdictBadge   = document.getElementById('img-verdict-badge');
-
-  // Webcam viewer
-  el.webcamVideo      = document.getElementById('webcam-video');
-  el.webcamAnnotated  = document.getElementById('webcam-annotated');
-  el.webcamIdle       = document.getElementById('webcam-idle');
-  el.webcamLiveBadge  = document.getElementById('webcam-live-badge');
-  el.webcamFpsBadge   = document.getElementById('webcam-fps-badge');
-
-  // Right panel
-  el.verdictCard        = document.getElementById('verdict-card');
-  el.verdictIcon        = document.getElementById('verdict-icon');
-  el.verdictLabel       = document.getElementById('verdict-label');
-  el.verdictConfDisplay = document.getElementById('verdict-conf-display');
-  el.verdictSub         = document.getElementById('verdict-sub');
-  el.statCount          = document.getElementById('stat-count');
-  el.statInference      = document.getElementById('stat-inference');
-  el.detectionCards     = document.getElementById('detection-cards');
-  el.performanceCard    = document.getElementById('performance-card');
-  el.perfDevice         = document.getElementById('perf-device');
-  el.perfModel          = document.getElementById('perf-model');
-  el.perfStatus         = document.getElementById('perf-status');
-  el.webcamStatsBody              = document.getElementById('webcam-stats-body');
-  el.webcamDetectionCardsSection  = document.getElementById('webcam-detection-cards-section');
-  el.webcamDetectionCards         = document.getElementById('webcam-detection-cards');
-
-  // Bottom bar
-  el.barApiDot    = document.getElementById('bar-api-dot');
-  el.barModelDot  = document.getElementById('bar-model-dot');
-  el.barCameraDot = document.getElementById('bar-camera-dot');
-  el.barApiText   = document.getElementById('bar-api-text');
-  el.barModelText = document.getElementById('bar-model-text');
-  el.barCameraText= document.getElementById('bar-camera-text');
-
-  // Canvas
-  el.captureCanvas = document.getElementById('capture-canvas');
-
-  // ── Event Listeners ────────────────────────────────────────────────────────
-  el.tabImage.addEventListener('click',  () => switchTab('image'));
-  el.tabWebcam.addEventListener('click', () => switchTab('webcam'));
-
-  // Upload button & file input
-  el.uploadBtn.addEventListener('click', () => el.fileInput.click());
-  el.fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
-
-  // Drop zone drag & drop
-  el.dropZone.addEventListener('dragover',  e => { e.preventDefault(); el.dropZone.classList.add('dragging'); });
-  el.dropZone.addEventListener('dragleave', ()  => el.dropZone.classList.remove('dragging'));
-  el.dropZone.addEventListener('drop', e => {
-    e.preventDefault(); el.dropZone.classList.remove('dragging');
-    handleFile(e.dataTransfer.files[0]);
+// Simulated ML detection payload when running without an active backend API
+function simulateInspectionResponse() {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      resolve({
+        status: 'DEFECT_DETECTED', // 'PASS' | 'DEFECT_DETECTED'
+        overallConfidence: 94.2,
+        processingTimeMs: 142,
+        defects: [
+          {
+            id: 1,
+            type: 'Porosity',
+            severity: 'High',
+            confidence: 96.5,
+            bbox: [120, 80, 200, 160] // [x1, y1, x2, y2]
+          },
+          {
+            id: 2,
+            type: 'Lack of Penetration',
+            severity: 'Medium',
+            confidence: 91.8,
+            bbox: [340, 210, 480, 260]
+          }
+        ]
+      });
+    }, 800);
   });
-  el.dropZone.addEventListener('click',   () => el.fileInput.click());
-  el.dropZone.addEventListener('keydown', e => { if (e.key === 'Enter') el.fileInput.click(); });
-
-  // Detect / clear
-  el.detectBtn.addEventListener('click', runDetect);
-  el.clearBtn.addEventListener('click',  clearImage);
-
-  // Image conf slider
-  el.imgConfSlider.addEventListener('input', e => updateImgConf(e.target.value));
-  updateImgConf(el.imgConfSlider.value);
-
-  // Webcam
-  el.startWebcamBtn.addEventListener('click', startWebcam);
-  el.stopWebcamBtn.addEventListener('click',  stopWebcam);
-  el.webcamConfSlider.addEventListener('input', e => updateWebcamConf(e.target.value));
-  updateWebcamConf(el.webcamConfSlider.value);
-
-  // View toggle (original vs annotated)
-  el.showOriginalBtn.addEventListener('click',  () => showAnnotatedView(false));
-  el.showAnnotatedBtn.addEventListener('click', () => showAnnotatedView(true));
-
-  // ── Initial render ─────────────────────────────────────────────────────────
-  renderDropZone();
-  renderActionButtons();
-  renderVerdictCard([], null, false);
-  renderWebcamUI();
-
-  // ── Status polling ─────────────────────────────────────────────────────────
-  pollStatus().then(renderSystemWarning);
-  setInterval(() => {
-    pollStatus().then(() => {
-      renderSystemWarning();
-      renderActionButtons();
-    });
-  }, STATUS_POLL_MS);
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// --- UI Rendering ---
+function renderInspectionResults(results) {
+  // Update Metrics
+  if (elements.confidenceMetric) elements.confidenceMetric.textContent = `${results.overallConfidence.toFixed(1)}%`;
+  if (elements.defectCountMetric) elements.defectCountMetric.textContent = results.defects.length;
+  if (elements.processingTimeMetric) elements.processingTimeMetric.textContent = `${results.processingTimeMs} ms`;
+
+  // Update Status Badge
+  if (results.defects.length === 0) {
+    updateStatusBadge('PASSED', 'status-success');
+  } else {
+    updateStatusBadge('DEFECT DETECTED', 'status-warning');
+  }
+
+  // Draw Bounding Boxes on Overlay Canvas
+  drawBoundingBoxes(results.defects);
+
+  // Populate Defect List Section
+  renderDefectList(results.defects);
+}
+
+function drawBoundingBoxes(defects) {
+  if (!elements.annotationCanvas) return;
+  const ctx = elements.annotationCanvas.getContext('2d');
+  clearCanvas();
+
+  defects.forEach(defect => {
+    const [x1, y1, x2, y2] = defect.bbox;
+    const width = x2 - x1;
+    const height = y2 - y1;
+
+    // Outer Bounding Box
+    ctx.strokeStyle = defect.severity === 'High' ? '#ef4444' : '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x1, y1, width, height);
+
+    // Box Tint Fill
+    ctx.fillStyle = defect.severity === 'High' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)';
+    ctx.fillRect(x1, y1, width, height);
+
+    // Label Header Tag
+    const label = `${defect.type} (${defect.confidence.toFixed(1)}%)`;
+    ctx.font = 'bold 14px sans-serif';
+    const textWidth = ctx.measureText(label).width;
+
+    ctx.fillStyle = defect.severity === 'High' ? '#ef4444' : '#f59e0b';
+    ctx.fillRect(x1, y1 > 22 ? y1 - 22 : y1, textWidth + 10, 22);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(label, x1 + 5, y1 > 22 ? y1 - 6 : y1 + 16);
+  });
+}
+
+function clearCanvas() {
+  if (!elements.annotationCanvas) return;
+  const ctx = elements.annotationCanvas.getContext('2d');
+  ctx.clearRect(0, 0, elements.annotationCanvas.width, elements.annotationCanvas.height);
+}
+
+function renderDefectList(defects) {
+  if (!elements.defectListContainer) return;
+
+  if (defects.length === 0) {
+    elements.defectListContainer.innerHTML = '<p class="empty-state">No defects detected in weld region.</p>';
+    return;
+  }
+
+  const itemsHtml = defects.map(d => `
+    <div class="defect-item defect-severity-${d.severity.toLowerCase()}">
+      <div class="defect-header">
+        <span class="defect-title">#${d.id} ${d.type}</span>
+        <span class="defect-badge">${d.severity}</span>
+      </div>
+      <div class="defect-details">
+        <span>Confidence: ${d.confidence.toFixed(1)}%</span>
+        <span>BBox: [${d.bbox.join(', ')}]</span>
+      </div>
+    </div>
+  `).join('');
+
+  elements.defectListContainer.innerHTML = itemsHtml;
+}
+
+function toggleImageView() {
+  if (!elements.annotationCanvas) return;
+
+  if (state.activeView === 'annotated') {
+    state.activeView = 'raw';
+    elements.annotationCanvas.style.display = 'none';
+    if (elements.viewModeLabel) elements.viewModeLabel.textContent = 'View Mode: Raw Image';
+  } else {
+    state.activeView = 'annotated';
+    elements.annotationCanvas.style.display = 'block';
+    if (elements.viewModeLabel) elements.viewModeLabel.textContent = 'View Mode: Annotated Overlay';
+  }
+}
+
+function setInspectingState(isInspecting) {
+  state.isInspecting = isInspecting;
+  if (elements.runInspectionBtn) {
+    elements.runInspectionBtn.disabled = isInspecting;
+    elements.runInspectionBtn.textContent = isInspecting ? 'Analyzing Weld...' : 'Run Inspection';
+  }
+}
+
+function updateStatusBadge(text, badgeClass) {
+  if (!elements.statusBadge) return;
+  elements.statusBadge.textContent = text;
+  elements.statusBadge.className = `status-badge ${badgeClass}`;
+}
+
+function clearResultsDisplay() {
+  if (elements.confidenceMetric) elements.confidenceMetric.textContent = '--';
+  if (elements.defectCountMetric) elements.defectCountMetric.textContent = '--';
+  if (elements.processingTimeMetric) elements.processingTimeMetric.textContent = '--';
+  if (elements.defectListContainer) elements.defectListContainer.innerHTML = '';
+  updateStatusBadge('READY', 'status-neutral');
+  clearCanvas();
+}
+
+function resetDashboard() {
+  stopWebcam();
+  if (state.currentImageObjectUrl) {
+    URL.revokeObjectURL(state.currentImageObjectUrl);
+  }
+
+  state.currentFile = null;
+  state.currentImageObjectUrl = null;
+  state.annotatedImageDataUrl = null;
+  state.inspectionResults = null;
+
+  if (elements.previewImage) elements.previewImage.src = '';
+  if (elements.fileInput) elements.fileInput.value = '';
+  if (elements.runInspectionBtn) elements.runInspectionBtn.disabled = true;
+
+  clearResultsDisplay();
+}
+
+function exportResultsJSON() {
+  if (!state.inspectionResults) {
+    alert('No inspection results available to export.');
+    return;
+  }
+
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.inspectionResults, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute("href", dataStr);
+  downloadAnchor.setAttribute("download", `weld_inspection_${Date.now()}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
