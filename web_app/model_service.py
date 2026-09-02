@@ -1,11 +1,15 @@
 """
 model_service.py
-WeldVision AI - ONNX Runtime inference engine
+WeldVision AI - YOLO ONNX inference service
+
+Class mapping:
+    0 = Bad Weld  -> DEFECT
+    1 = Good Weld -> PASS
+    2 = Defect    -> DEFECT
 """
 
-import logging
 import time
-from pathlib import Path
+import threading
 
 import cv2
 import numpy as np
@@ -18,309 +22,271 @@ from web_app.config import (
     DEFAULT_CONF_THRESHOLD,
     DEFECTIVE_IDS,
     GOOD_IDS,
+    INPUT_SIZE,
     MODEL_PATH,
+    NMS_IOU_THRESHOLD,
 )
 
-# =========================================================
-# LOGGING
-# =========================================================
 
-logging.basicConfig(level=logging.INFO)
-
-logger = logging.getLogger(__name__)
-
-
-# =========================================================
+# ============================================================
 # GLOBAL MODEL STATE
-# =========================================================
+# ============================================================
 
 _session = None
-_input_name = None
-_output_names = None
-
-_model_loaded = False
 _model_error = None
+_model_lock = threading.Lock()
 
 
-# =========================================================
-# LOAD ONNX MODEL
-# =========================================================
+# ============================================================
+# MODEL LOADING
+# ============================================================
 
 def load_model():
+    """
+    Load the ONNX model using ONNX Runtime.
+
+    The model is loaded only once and reused for all predictions.
+    """
 
     global _session
-    global _input_name
-    global _output_names
-    global _model_loaded
     global _model_error
 
-    try:
+    if _session is not None:
+        return _session
 
-        if not MODEL_PATH.exists():
+    with _model_lock:
 
-            _model_error = (
-                f"Model not found: {MODEL_PATH}"
+        if _session is not None:
+            return _session
+
+        try:
+            model_path = str(MODEL_PATH)
+
+            print("=" * 60)
+            print("WELDVISION AI - LOADING ONNX MODEL")
+            print("=" * 60)
+            print(f"Model path: {model_path}")
+
+            providers = ["CPUExecutionProvider"]
+
+            _session = ort.InferenceSession(
+                model_path,
+                providers=providers
             )
 
-            logger.error(_model_error)
+            _model_error = None
 
-            return
+            print("Model loaded successfully.")
+            print(f"Providers: {_session.get_providers()}")
 
-        logger.info(
-            f"Loading ONNX model: {MODEL_PATH}"
-        )
+            # Print input information
+            for inp in _session.get_inputs():
+                print(
+                    f"Input: {inp.name} | "
+                    f"Shape: {inp.shape} | "
+                    f"Type: {inp.type}"
+                )
 
-        options = ort.SessionOptions()
+            # Print output information
+            for out in _session.get_outputs():
+                print(
+                    f"Output: {out.name} | "
+                    f"Shape: {out.shape} | "
+                    f"Type: {out.type}"
+                )
 
-        options.intra_op_num_threads = 1
-        options.inter_op_num_threads = 1
+            print("=" * 60)
 
-        options.graph_optimization_level = (
-            ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        )
+            return _session
 
-        _session = ort.InferenceSession(
-            str(MODEL_PATH),
-            sess_options=options,
-            providers=[
-                "CPUExecutionProvider"
-            ],
-        )
+        except Exception as exc:
+            _session = None
+            _model_error = str(exc)
 
-        _input_name = (
-            _session.get_inputs()[0].name
-        )
+            print("=" * 60)
+            print("ERROR LOADING ONNX MODEL")
+            print("=" * 60)
+            print(_model_error)
+            print("=" * 60)
 
-        _output_names = [
-            output.name
-            for output in _session.get_outputs()
-        ]
-
-        _model_loaded = True
-        _model_error = None
-
-        logger.info(
-            "ONNX model loaded successfully."
-        )
-
-        logger.info(
-            f"Input: {_input_name}"
-        )
-
-        logger.info(
-            f"Outputs: {_output_names}"
-        )
-
-    except Exception as exc:
-
-        _model_loaded = False
-
-        _model_error = str(exc)
-
-        logger.exception(
-            "Failed to load ONNX model."
-        )
+            return None
 
 
-# Load model when Flask starts
-load_model()
-
-
-# =========================================================
-# STATUS
-# =========================================================
+# ============================================================
+# MODEL STATUS
+# ============================================================
 
 def get_status():
+    """
+    Return the current API/model status.
+    """
+
+    session = load_model()
 
     return {
-        "status": "online",
-        "api": "online",
-
-        "model_loaded": _model_loaded,
-
-        "model_name": (
-            MODEL_PATH.name
-            if MODEL_PATH
-            else "Unknown"
-        ),
-
-        "device": "CPU / ONNX Runtime",
-
+        "status": "online" if session is not None else "error",
+        "model_loaded": session is not None,
+        "model_name": MODEL_PATH.name,
         "model_path": str(MODEL_PATH),
-
+        "device": "CPU / ONNX Runtime",
         "error": _model_error,
-
-        "class_mapping": {
-            "0": "Bad Weld",
-            "1": "Good Weld",
-            "2": "Defect",
-        },
-
-        "good_classes": [1],
-
-        "defective_classes": [0, 2],
     }
 
 
-# =========================================================
-# LETTERBOX PREPROCESSING
-# =========================================================
+# ============================================================
+# IMAGE PREPROCESSING
+# ============================================================
 
 def preprocess(image):
+    """
+    Convert an OpenCV BGR image into YOLO ONNX input format.
+
+    Output:
+        numpy array with shape:
+        (1, 3, INPUT_SIZE, INPUT_SIZE)
+    """
 
     if image is None:
-
-        raise ValueError(
-            "Input image is None."
-        )
+        raise ValueError("Input image is None.")
 
     if image.size == 0:
+        raise ValueError("Input image is empty.")
 
-        raise ValueError(
-            "Input image is empty."
-        )
-
-    original_height, original_width = image.shape[:2]
-
-    scale = min(
-        INPUT_SIZE / original_width,
-        INPUT_SIZE / original_height,
-    )
-
-    new_width = int(
-        round(original_width * scale)
-    )
-
-    new_height = int(
-        round(original_height * scale)
-    )
-
+    # Resize to model input size
     resized = cv2.resize(
         image,
-        (new_width, new_height),
-        interpolation=cv2.INTER_LINEAR,
+        (INPUT_SIZE, INPUT_SIZE),
+        interpolation=cv2.INTER_LINEAR
     )
-
-    canvas = np.full(
-        (
-            INPUT_SIZE,
-            INPUT_SIZE,
-            3,
-        ),
-        114,
-        dtype=np.uint8,
-    )
-
-    pad_left = (
-        INPUT_SIZE - new_width
-    ) // 2
-
-    pad_top = (
-        INPUT_SIZE - new_height
-    ) // 2
-
-    canvas[
-        pad_top:
-        pad_top + new_height,
-        pad_left:
-        pad_left + new_width
-    ] = resized
 
     # BGR -> RGB
     rgb = cv2.cvtColor(
-        canvas,
-        cv2.COLOR_BGR2RGB,
+        resized,
+        cv2.COLOR_BGR2RGB
     )
+
+    # Convert uint8 -> float32
+    tensor = rgb.astype(np.float32) / 255.0
 
     # HWC -> CHW
-    blob = rgb.transpose(
-        2,
-        0,
-        1,
+    tensor = np.transpose(
+        tensor,
+        (2, 0, 1)
     )
-
-    # Normalize
-    blob = blob.astype(
-        np.float32
-    ) / 255.0
 
     # Add batch dimension
-    blob = np.expand_dims(
-        blob,
-        axis=0,
+    tensor = np.expand_dims(
+        tensor,
+        axis=0
     )
 
-    return (
-        blob,
-        scale,
-        pad_left,
-        pad_top,
-    )
+    return tensor
 
 
-# =========================================================
-# OUTPUT PARSER
-# =========================================================
+# ============================================================
+# PREDICTION PARSER
+# ============================================================
 
 def parse_predictions(
     output,
-    scale,
-    pad_left,
-    pad_top,
-    image_width,
-    image_height,
-    confidence_threshold,
+    original_width,
+    original_height,
+    confidence_threshold=DEFAULT_CONF_THRESHOLD,
 ):
+    """
+    Parse YOLO ONNX predictions.
+
+    Supports common YOLO output formats:
+
+        YOLOv8:
+        [x, y, w, h, class_scores...]
+
+    and formats containing objectness:
+
+        [x, y, w, h, objectness, class_scores...]
+
+    Returns a list of detection dictionaries.
+    """
 
     predictions = np.asarray(output)
 
-    # Remove batch dimension
-    predictions = np.squeeze(
-        predictions
-    )
+    # --------------------------------------------------------
+    # Remove unnecessary dimensions
+    # --------------------------------------------------------
+
+    predictions = np.squeeze(predictions)
 
     if predictions.ndim != 2:
-
         raise ValueError(
-            f"Unexpected ONNX output shape: "
-            f"{predictions.shape}"
+            f"Unexpected YOLO output shape: {predictions.shape}"
         )
 
-    # YOLOv8 commonly returns:
+    # --------------------------------------------------------
+    # YOLO commonly returns:
     #
-    # (84, 8400)
+    #   (84, 8400)
     #
-    # Convert to:
+    # or:
     #
-    # (8400, 84)
+    #   (8400, 84)
+    #
+    # For 3 classes:
+    #
+    #   (7, 8400)
+    # --------------------------------------------------------
 
     if predictions.shape[0] < predictions.shape[1]:
-
         predictions = predictions.T
 
+    num_columns = predictions.shape[1]
+
+    # We have 3 classes.
+    #
+    # YOLOv8 format:
+    #   4 + 3 = 7
+    #
+    # Objectness format:
+    #   5 + 3 = 8
+    # --------------------------------------------------------
+
+    if num_columns not in (7, 8):
+        raise ValueError(
+            f"Unexpected YOLO prediction shape: "
+            f"{predictions.shape}. "
+            f"Expected 7 or 8 values per detection."
+        )
+
+    # --------------------------------------------------------
+    # Determine scale from model input to original image
+    # --------------------------------------------------------
+
+    x_scale = original_width / float(INPUT_SIZE)
+    y_scale = original_height / float(INPUT_SIZE)
+
     boxes = []
-    confidences = []
+    scores = []
     class_ids = []
 
-    number_of_classes = len(
-        CLASS_DISPLAY_NAMES
-    )
+    # ========================================================
+    # LOOP THROUGH PREDICTIONS
+    # ========================================================
 
-    for row in predictions:
+    for prediction in predictions:
 
-        if len(row) < 5:
-
-            continue
-
-        # -------------------------------------------------
-        # Standard YOLOv8:
+        # ----------------------------------------------------
+        # YOLOv8 standard format
         #
-        # cx, cy, w, h, class0, class1, class2
-        # -------------------------------------------------
+        # x, y, w, h, class0, class1, class2
+        # ----------------------------------------------------
 
-        if len(row) == 4 + number_of_classes:
+        if num_columns == 7:
 
-            class_scores = row[4:]
+            x_center = float(prediction[0])
+            y_center = float(prediction[1])
+            width = float(prediction[2])
+            height = float(prediction[3])
+
+            class_scores = prediction[4:]
 
             class_id = int(
                 np.argmax(class_scores)
@@ -330,119 +296,101 @@ def parse_predictions(
                 class_scores[class_id]
             )
 
-        # -------------------------------------------------
-        # Some YOLO exports include objectness:
+        # ----------------------------------------------------
+        # Objectness format
         #
-        # cx, cy, w, h, objectness, class0...
-        # -------------------------------------------------
-
-        elif len(row) == 5 + number_of_classes:
-
-            objectness = float(
-                row[4]
-            )
-
-            class_scores = row[5:]
-
-            class_id = int(
-                np.argmax(class_scores)
-            )
-
-            confidence = (
-                objectness
-                * float(class_scores[class_id])
-            )
+        # x, y, w, h, objectness,
+        # class0, class1, class2
+        # ----------------------------------------------------
 
         else:
 
-            # Fallback
-            class_scores = row[4:]
+            x_center = float(prediction[0])
+            y_center = float(prediction[1])
+            width = float(prediction[2])
+            height = float(prediction[3])
+
+            objectness = float(
+                prediction[4]
+            )
+
+            class_scores = prediction[5:]
 
             class_id = int(
                 np.argmax(class_scores)
             )
 
-            confidence = float(
+            class_confidence = float(
                 class_scores[class_id]
             )
 
-        if confidence < confidence_threshold:
+            confidence = (
+                objectness * class_confidence
+            )
 
+        # ----------------------------------------------------
+        # Confidence filtering
+        # ----------------------------------------------------
+
+        if confidence < confidence_threshold:
             continue
 
-        cx, cy, width, height = (
-            map(float, row[:4])
-        )
+        # ----------------------------------------------------
+        # Convert center coordinates to corners
+        # ----------------------------------------------------
 
-        # Convert from model coordinates
-        # back to original image coordinates.
+        x1 = (x_center - width / 2.0) * x_scale
+        y1 = (y_center - height / 2.0) * y_scale
+        x2 = (x_center + width / 2.0) * x_scale
+        y2 = (y_center + height / 2.0) * y_scale
 
-        x1 = (
-            cx - width / 2 - pad_left
-        ) / scale
+        # ----------------------------------------------------
+        # Clamp coordinates to image boundaries
+        # ----------------------------------------------------
 
-        y1 = (
-            cy - height / 2 - pad_top
-        ) / scale
-
-        x2 = (
-            cx + width / 2 - pad_left
-        ) / scale
-
-        y2 = (
-            cy + height / 2 - pad_top
-        ) / scale
-
-        # Clip bounding box
         x1 = max(
             0,
-            min(
-                image_width - 1,
-                x1,
-            ),
+            min(int(round(x1)), original_width - 1)
         )
 
         y1 = max(
             0,
-            min(
-                image_height - 1,
-                y1,
-            ),
+            min(int(round(y1)), original_height - 1)
         )
 
         x2 = max(
             0,
-            min(
-                image_width - 1,
-                x2,
-            ),
+            min(int(round(x2)), original_width - 1)
         )
 
         y2 = max(
             0,
-            min(
-                image_height - 1,
-                y2,
-            ),
+            min(int(round(y2)), original_height - 1)
         )
 
-        box_width = x2 - x1
-        box_height = y2 - y1
+        box_width = max(
+            0,
+            x2 - x1
+        )
 
-        if box_width <= 2 or box_height <= 2:
+        box_height = max(
+            0,
+            y2 - y1
+        )
 
+        if box_width <= 0 or box_height <= 0:
             continue
 
         boxes.append(
             [
-                int(x1),
-                int(y1),
-                int(box_width),
-                int(box_height),
+                x1,
+                y1,
+                box_width,
+                box_height
             ]
         )
 
-        confidences.append(
+        scores.append(
             confidence
         )
 
@@ -450,333 +398,390 @@ def parse_predictions(
             class_id
         )
 
-    return (
+    # ========================================================
+    # NON-MAXIMUM SUPPRESSION
+    # ========================================================
+
+    if not boxes:
+        return []
+
+    indices = cv2.dnn.NMSBoxes(
         boxes,
-        confidences,
-        class_ids,
+        scores,
+        confidence_threshold,
+        NMS_IOU_THRESHOLD
     )
 
+    if indices is None or len(indices) == 0:
+        return []
 
-# =========================================================
-# INFERENCE
-# =========================================================
+    # OpenCV can return:
+    #
+    # [[0], [1], [2]]
+    #
+    # or:
+    #
+    # [0, 1, 2]
+    #
+    indices = np.array(indices).reshape(-1)
+
+    detections = []
+
+    # ========================================================
+    # BUILD DETECTION RESULTS
+    # ========================================================
+
+    for index in indices:
+
+        index = int(index)
+
+        x, y, width, height = boxes[index]
+
+        class_id = int(
+            class_ids[index]
+        )
+
+        confidence = float(
+            scores[index]
+        )
+
+        # ----------------------------------------------------
+        # Get class name
+        # ----------------------------------------------------
+
+        class_name = CLASS_DISPLAY_NAMES.get(
+            class_id,
+            f"Class {class_id}"
+        )
+
+        # ----------------------------------------------------
+        # Determine Good / Defective
+        # ----------------------------------------------------
+
+        is_good = (
+            class_id in GOOD_IDS
+        )
+
+        is_defective = (
+            class_id in DEFECTIVE_IDS
+        )
+
+        # ----------------------------------------------------
+        # Final coordinates
+        # ----------------------------------------------------
+
+        x1 = int(x)
+        y1 = int(y)
+        x2 = int(x + width)
+        y2 = int(y + height)
+
+        detections.append(
+            {
+                "class_id": class_id,
+                "class_name": class_name,
+
+                # Compatibility field
+                "class": class_name,
+
+                "confidence": round(
+                    confidence,
+                    4
+                ),
+
+                "is_good": is_good,
+                "is_defective": is_defective,
+
+                "bbox": {
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
+                },
+            }
+        )
+
+    return detections
+
+
+# ============================================================
+# DRAW DETECTIONS
+# ============================================================
+
+def draw_detections(
+    image,
+    detections,
+):
+    """
+    Draw bounding boxes and labels on the image.
+    """
+
+    annotated = image.copy()
+
+    for detection in detections:
+
+        class_id = detection["class_id"]
+        class_name = detection["class_name"]
+        confidence = detection["confidence"]
+
+        bbox = detection["bbox"]
+
+        x1 = bbox["x1"]
+        y1 = bbox["y1"]
+        x2 = bbox["x2"]
+        y2 = bbox["y2"]
+
+        # ----------------------------------------------------
+        # Color based on class
+        # ----------------------------------------------------
+
+        if class_id in GOOD_IDS:
+            color = COLOR_GOOD
+
+        else:
+            color = COLOR_DEFECTIVE
+
+        # ----------------------------------------------------
+        # Bounding box
+        # ----------------------------------------------------
+
+        cv2.rectangle(
+            annotated,
+            (x1, y1),
+            (x2, y2),
+            color,
+            2
+        )
+
+        # ----------------------------------------------------
+        # Label
+        # ----------------------------------------------------
+
+        label = (
+            f"{class_name} "
+            f"{confidence * 100:.1f}%"
+        )
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.55
+        thickness = 2
+
+        (text_width, text_height), baseline = (
+            cv2.getTextSize(
+                label,
+                font,
+                font_scale,
+                thickness
+            )
+        )
+
+        # Keep label inside image
+        label_x = max(
+            0,
+            x1
+        )
+
+        label_y = max(
+            text_height + baseline,
+            y1
+        )
+
+        # Background rectangle
+        cv2.rectangle(
+            annotated,
+            (
+                label_x,
+                label_y - text_height - baseline
+            ),
+            (
+                label_x + text_width,
+                label_y
+            ),
+            color,
+            -1
+        )
+
+        # Text
+        cv2.putText(
+            annotated,
+            label,
+            (
+                label_x,
+                label_y - baseline
+            ),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
+            cv2.LINE_AA
+        )
+
+    return annotated
+
+
+# ============================================================
+# RUN INFERENCE
+# ============================================================
 
 def run_inference(
     image,
-    conf_threshold=DEFAULT_CONF_THRESHOLD,
+    confidence_threshold=DEFAULT_CONF_THRESHOLD,
 ):
+    """
+    Run YOLO ONNX inference on an OpenCV BGR image.
 
-    if not _model_loaded:
-
-        return {
-            "success": False,
-            "annotated_image": image,
-            "detections": [],
-            "count": 0,
-            "inference_time_ms": 0,
-            "error": _model_error
-            or "Model is not loaded.",
+    Returns:
+        {
+            "detections": [...],
+            "verdict": "PASS" / "DEFECT" / "NO_WELD",
+            "has_defect": bool,
+            "has_good": bool,
+            "inference_time_ms": float,
+            "annotated_image": numpy.ndarray
         }
+    """
 
-    try:
+    # ========================================================
+    # VALIDATE IMAGE
+    # ========================================================
 
-        start_time = time.perf_counter()
-
-        image_height, image_width = (
-            image.shape[:2]
+    if image is None:
+        raise ValueError(
+            "Input image is None."
         )
 
-        # -------------------------------------------------
-        # PREPROCESS
-        # -------------------------------------------------
-
-        blob, scale, pad_left, pad_top = (
-            preprocess(image)
+    if image.size == 0:
+        raise ValueError(
+            "Input image is empty."
         )
 
-        # -------------------------------------------------
-        # ONNX INFERENCE
-        # -------------------------------------------------
+    # ========================================================
+    # LOAD MODEL
+    # ========================================================
 
-        outputs = _session.run(
-            _output_names,
-            {
-                _input_name: blob
-            },
+    session = load_model()
+
+    if session is None:
+        raise RuntimeError(
+            f"ONNX model could not be loaded: "
+            f"{_model_error}"
         )
 
-        # -------------------------------------------------
-        # PARSE OUTPUT
-        # -------------------------------------------------
+    # ========================================================
+    # ORIGINAL IMAGE SIZE
+    # ========================================================
 
-        (
-            boxes,
-            confidences,
-            class_ids,
-        ) = parse_predictions(
-            outputs[0],
-            scale,
-            pad_left,
-            pad_top,
-            image_width,
-            image_height,
-            conf_threshold,
-        )
+    original_height, original_width = image.shape[:2]
 
-        # -------------------------------------------------
-        # NMS
-        # -------------------------------------------------
+    # ========================================================
+    # PREPROCESS
+    # ========================================================
 
-        indices = []
+    input_tensor = preprocess(
+        image
+    )
 
-        if boxes:
+    # ========================================================
+    # GET INPUT NAME
+    # ========================================================
 
-            indices = cv2.dnn.NMSBoxes(
-                boxes,
-                confidences,
-                conf_threshold,
-                NMS_IOU_THRESHOLD,
-            )
+    input_name = session.get_inputs()[0].name
 
-        # -------------------------------------------------
-        # DRAW RESULTS
-        # -------------------------------------------------
+    # ========================================================
+    # RUN ONNX INFERENCE
+    # ========================================================
 
-        annotated = image.copy()
+    start_time = time.perf_counter()
 
-        detections = []
-
-        if len(indices) > 0:
-
-            for index in np.array(
-                indices
-            ).flatten():
-
-                x, y, width, height = (
-                    boxes[index]
-                )
-
-                x2 = x + width
-                y2 = y + height
-
-                confidence = confidences[
-                    index
-                ]
-
-                class_id = class_ids[
-                    index
-                ]
-
-                # -------------------------------------------------
-                # CORRECT CLASS MAPPING
-                # -------------------------------------------------
-
-                class_name = (
-                    CLASS_DISPLAY_NAMES.get(
-                        class_id,
-                        f"Class {class_id}",
-                    )
-                )
-
-                is_good = (
-                    class_id in GOOD_IDS
-                )
-
-                is_defective = (
-                    class_id in DEFECTIVE_IDS
-                )
-
-                color = (
-                    COLOR_GOOD
-                    if is_good
-                    else COLOR_DEFECTIVE
-                )
-
-                # -------------------------------------------------
-                # DRAW BOX
-                # -------------------------------------------------
-
-                cv2.rectangle(
-                    annotated,
-                    (x, y),
-                    (x2, y2),
-                    color,
-                    3,
-                )
-
-                # -------------------------------------------------
-                # LABEL
-                # -------------------------------------------------
-
-                label = (
-                    f"{class_name} "
-                    f"{confidence:.0%}"
-                )
-
-                (
-                    text_width,
-                    text_height,
-                ), baseline = cv2.getTextSize(
-                    label,
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
-                    2,
-                )
-
-                label_top = max(
-                    0,
-                    y - text_height - baseline - 6,
-                )
-
-                label_bottom = (
-                    label_top
-                    + text_height
-                    + baseline
-                    + 6
-                )
-
-                label_right = (
-                    x
-                    + text_width
-                    + 8
-                )
-
-                cv2.rectangle(
-                    annotated,
-                    (x, label_top),
-                    (
-                        label_right,
-                        label_bottom,
-                    ),
-                    color,
-                    -1,
-                )
-
-                cv2.putText(
-                    annotated,
-                    label,
-                    (
-                        x + 4,
-                        label_bottom - baseline - 3,
-                    ),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-
-                # -------------------------------------------------
-                # SAVE DETECTION
-                # -------------------------------------------------
-
-                detections.append(
-                    {
-                        "class_id": class_id,
-
-                        "class_name": class_name,
-
-                        # Compatibility with older frontend
-                        "class": class_name,
-
-                        "confidence": round(
-                            confidence,
-                            4,
-                        ),
-
-                        "is_good": is_good,
-
-                        "is_defective": is_defective,
-
-                        "bbox": {
-                            "x1": x,
-                            "y1": y,
-                            "x2": x2,
-                            "y2": y2,
-                        },
-                    }
-                )
-
-        # -------------------------------------------------
-        # OVERALL VERDICT
-        # -------------------------------------------------
-
-        has_defect = any(
-            detection["class_id"]
-            in DEFECTIVE_IDS
-            for detection in detections
-        )
-
-        has_good = any(
-            detection["class_id"]
-            in GOOD_IDS
-            for detection in detections
-        )
-
-        if has_defect:
-
-            verdict = "DEFECT"
-
-        elif has_good:
-
-            verdict = "PASS"
-
-        else:
-
-            verdict = "NO_WELD"
-
-        # -------------------------------------------------
-        # INFERENCE TIME
-        # -------------------------------------------------
-
-        inference_time_ms = round(
-            (
-                time.perf_counter()
-                - start_time
-            )
-            * 1000,
-            2,
-        )
-
-        return {
-
-            "success": True,
-
-            "annotated_image": annotated,
-
-            "detections": detections,
-
-            "count": len(detections),
-
-            "inference_time_ms":
-                inference_time_ms,
-
-            "verdict": verdict,
-
-            "has_defect": has_defect,
-
-            "has_good": has_good,
-
-            "error": None,
+    outputs = session.run(
+        None,
+        {
+            input_name: input_tensor
         }
+    )
 
-    except Exception as exc:
+    inference_time_ms = (
+        time.perf_counter() - start_time
+    ) * 1000.0
 
-        logger.exception(
-            "Inference failed."
+    # ========================================================
+    # VALIDATE OUTPUT
+    # ========================================================
+
+    if not outputs:
+        raise RuntimeError(
+            "ONNX model returned no output."
         )
 
-        return {
+    # First output is normally YOLO predictions
+    output = outputs[0]
 
-            "success": False,
+    # ========================================================
+    # PARSE PREDICTIONS
+    # ========================================================
 
-            "annotated_image": image,
+    detections = parse_predictions(
+        output=output,
+        original_width=original_width,
+        original_height=original_height,
+        confidence_threshold=confidence_threshold,
+    )
 
-            "detections": [],
+    # ========================================================
+    # DETERMINE OVERALL VERDICT
+    #
+    # 0 = Bad Weld  -> DEFECT
+    # 1 = Good Weld -> PASS
+    # 2 = Defect    -> DEFECT
+    #
+    # Priority:
+    # DEFECT > PASS > NO_WELD
+    # ========================================================
 
-            "count": 0,
+    has_defect = any(
+        detection["class_id"] in DEFECTIVE_IDS
+        for detection in detections
+    )
 
-            "inference_time_ms": 0,
+    has_good = any(
+        detection["class_id"] in GOOD_IDS
+        for detection in detections
+    )
 
-            "error": str(exc),
-        }
+    if has_defect:
+        verdict = "DEFECT"
+
+    elif has_good:
+        verdict = "PASS"
+
+    else:
+        verdict = "NO_WELD"
+
+    # ========================================================
+    # DRAW RESULTS
+    # ========================================================
+
+    annotated_image = draw_detections(
+        image,
+        detections
+    )
+
+    # ========================================================
+    # RETURN RESULT
+    # ========================================================
+
+    return {
+        "detections": detections,
+
+        "verdict": verdict,
+
+        "has_defect": has_defect,
+
+        "has_good": has_good,
+
+        "inference_time_ms": round(
+            inference_time_ms,
+            2
+        ),
+
+        "annotated_image": annotated_image,
+    }
