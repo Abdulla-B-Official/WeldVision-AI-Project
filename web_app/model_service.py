@@ -11,18 +11,15 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
-from config import (
-    MODEL_PATH,
-    INPUT_SIZE,
-    DEFAULT_CONF_THRESHOLD,
-    NMS_IOU_THRESHOLD,
-    GOOD_IDS,
-    DEFECTIVE_IDS,
+from web_app.config import (
     CLASS_DISPLAY_NAMES,
-    COLOR_GOOD,
     COLOR_DEFECTIVE,
+    COLOR_GOOD,
+    DEFAULT_CONF_THRESHOLD,
+    DEFECTIVE_IDS,
+    GOOD_IDS,
+    MODEL_PATH,
 )
-
 
 # =========================================================
 # LOGGING

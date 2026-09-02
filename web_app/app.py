@@ -20,13 +20,12 @@ from flask import (
     request,
 )
 
-from config import DEFAULT_CONF_THRESHOLD
+from web_app.config import DEFAULT_CONF_THRESHOLD
 
-from model_service import (
+from web_app.model_service import (
     get_status,
     run_inference,
 )
-
 
 # =========================================================
 # CLASS MAPPING
