@@ -5,5 +5,5 @@ test: test/images
  
 names:
   0: Bad Weld
-  1: Good Weld
-  2: Defect
+  1: Defect
+  2: Good Weld

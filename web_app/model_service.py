@@ -1,6 +1,6 @@
 """
-model_service.py — Lightweight Native ONNX Runtime Inference Engine.
-Uses pure onnxruntime + opencv without PyTorch overhead (<80MB RAM).
+model_service.py — Pure ONNX Runtime engine.
+Eliminates PyTorch dependencies to maintain low memory usage (<80MB RAM).
 """
 
 import logging
@@ -29,7 +29,6 @@ _output_names = None
 
 try:
     if MODEL_PATH.exists():
-        # Restrict threads to keep CPU and memory usage minimal on Render
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = 1
         opts.inter_op_num_threads = 1
@@ -39,26 +38,26 @@ try:
         _output_names = [o.name for o in _session.get_outputs()]
         
         _model_loaded = True
-        logger.info(f"Pure ONNX Engine successfully loaded from {MODEL_PATH}")
+        logger.info(f"Native ONNX Engine loaded from {MODEL_PATH}")
     else:
         _model_error = f"Model file not found: {MODEL_PATH}"
 except Exception as exc:
     _model_error = str(exc)
-    logger.error(f"Failed to initialize ONNX session: {exc}")
+    logger.error(f"Failed to load ONNX model: {exc}")
 
 
 def get_status() -> dict:
     return {
         "status": "online",
         "model_loaded": _model_loaded,
-        "model_name": MODEL_PATH.name,
+        "model_name": MODEL_PATH.name if MODEL_PATH else "N/A",
         "device": "cpu (pure-onnx)",
         "error": _model_error,
     }
 
 
 def preprocess(image: np.ndarray, target_size: int = 640):
-    """Resize and pad image for YOLO 640x640 input shape."""
+    """Resize, letterbox, normalize image to (1, 3, 640, 640) float32 array."""
     h, w = image.shape[:2]
     scale = min(target_size / h, target_size / w)
     nh, nw = int(h * scale), int(w * scale)
@@ -70,14 +69,20 @@ def preprocess(image: np.ndarray, target_size: int = 640):
     left = (target_size - nw) // 2
     canvas[top:top + nh, left:left + nw] = resized
     
-    # BGR to RGB -> Normalization -> Batch CHW dimension
     blob = canvas[:, :, ::-1].transpose((2, 0, 1)).astype(np.float32) / 255.0
     return np.expand_dims(blob, axis=0), scale, top, left
 
 
 def run_inference(image: np.ndarray, conf_threshold: float = DEFAULT_CONF_THRESHOLD) -> dict:
     if not _model_loaded or _session is None:
-        return {"success": False, "annotated_image": image, "detections": [], "count": 0, "inference_time_ms": 0.0, "error": _model_error}
+        return {
+            "success": False,
+            "annotated_image": image,
+            "detections": [],
+            "count": 0,
+            "inference_time_ms": 0.0,
+            "error": _model_error,
+        }
 
     try:
         t_start = time.perf_counter()
@@ -85,10 +90,9 @@ def run_inference(image: np.ndarray, conf_threshold: float = DEFAULT_CONF_THRESH
         blob, scale, pad_top, pad_left = preprocess(image)
         outputs = _session.run(_output_names, {_input_name: blob})
         
-        # Post-processing YOLO outputs
         preds = np.squeeze(outputs[0])
         if preds.shape[0] < preds.shape[1]:
-            preds = preds.T  # Transpose output to shape (8400, 84)
+            preds = preds.T  # Transpose to shape (8400, 84)
 
         boxes, confidences, class_ids = [], [], []
 
@@ -126,7 +130,6 @@ def run_inference(image: np.ndarray, conf_threshold: float = DEFAULT_CONF_THRESH
                 class_name = CLASS_DISPLAY_NAMES.get(class_id, f"Class {class_id}")
                 color = COLOR_GOOD if class_id in GOOD_IDS else COLOR_DEFECTIVE
 
-                # Draw bounding box and label
                 cv2.rectangle(annotated, (max(0, x1), max(0, y1)), (min(image.shape[1], x2), min(image.shape[0], y2)), color, 3)
 
                 label = f"{class_name} {confidence:.0%}"
@@ -154,4 +157,11 @@ def run_inference(image: np.ndarray, conf_threshold: float = DEFAULT_CONF_THRESH
 
     except Exception as exc:
         logger.exception("Inference failed")
-        return {"success": False, "annotated_image": image, "detections": [], "count": 0, "inference_time_ms": 0.0, "error": str(exc)}
+        return {
+            "success": False,
+            "annotated_image": image,
+            "detections": [],
+            "count": 0,
+            "inference_time_ms": 0.0,
+            "error": str(exc),
+        }

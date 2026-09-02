@@ -4,8 +4,8 @@ utils.py — Image encoding / decoding helpers for WeldVision AI.
 
 import base64
 import io
-import numpy as np
 import cv2
+import numpy as np
 from PIL import Image
 
 

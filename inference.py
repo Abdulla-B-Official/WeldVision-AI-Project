@@ -1,5 +1,5 @@
-import json
 import gc
+import json
 import cv2
 import torch
 from ultralytics import YOLO
@@ -9,10 +9,17 @@ torch.set_grad_enabled(False)
 
 # Dataset class mapping:
 #   0 -> Bad Weld   (defective)
-#   1 -> Good Weld  (good)
-#   2 -> Defect     (defective)
-GOOD_IDS = {1}
-DEFECTIVE_IDS = {0, 2}
+#   1 -> Defect     (defective)
+#   2 -> Good Weld  (good)
+GOOD_IDS = {2}
+DEFECTIVE_IDS = {0, 1}
+
+# Display names override to fix model's swapped classes
+CLASS_DISPLAY_NAMES = {
+    0: "Bad Weld",
+    1: "Defect",
+    2: "Good Weld",
+}
 
 # Load model
 model = YOLO("runs/detect/weld_yolov8m/weights/best.pt")
@@ -34,7 +41,10 @@ for result in results:
         x1, y1, x2, y2 = map(int, box.xyxy[0])
         confidence = float(box.conf[0])
         class_id = int(box.cls[0])
-        class_name = model.names[class_id]
+        
+        class_name = CLASS_DISPLAY_NAMES.get(
+            class_id, model.names.get(class_id, f"Class {class_id}")
+        )
 
         # Green for good, Red for defective
         color = (0, 255, 0) if class_id in GOOD_IDS else (0, 0, 255)

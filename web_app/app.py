@@ -1,196 +1,108 @@
 """
-app.py — WeldVision AI  |  Production-Ready Entry Point.
+app.py — Flask REST API Server for WeldVision AI.
+Handles UI rendering, image uploads, batch inference, and API endpoints.
 """
 
-import os
-
-# ── Limit thread spawning and memory allocation BEFORE importing heavy libraries ──
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32"
-
-import io
-import logging
-from pathlib import Path
-import sys
-import threading
-import webbrowser
-
+import base64
+import cv2
+import numpy as np
 from flask import Flask, jsonify, render_template, request
-from PIL import Image
 
-# ── Ensure sibling modules resolve regardless of entry point ──
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from config import DEFAULT_CONF_THRESHOLD
+from model_service import get_status, run_inference
 
-import model_service
-import utils
-from config import DEFAULT_CONF_THRESHOLD, MAX_IMAGE_SIZE
-
-# ── Logging ────────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ── Flask app ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "bmp"}
-
-
-def _allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-# ── UI route ───────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
-    """Serve the WeldVision AI web interface."""
+    """Render main dashboard interface."""
     return render_template("index.html")
 
 
-# ── API routes ─────────────────────────────────────────────────────────────────
-
-@app.route("/api/status", methods=["GET"])
-def status():
-    """Return model and device status."""
-    return jsonify(model_service.get_status())
+@app.route("/health", methods=["GET"])
+def health():
+    """API health check and model status route."""
+    return jsonify(get_status())
 
 
-@app.route("/api/predict", methods=["POST"])
+@app.route("/predict", methods=["POST"])
 def predict():
-    """
-    Accept multipart/form-data image upload.
-    Optional field: conf_threshold (float, default 0.50)
-    Returns annotated image (base64) + detections JSON.
-    """
-    if "image" not in request.files:
-        return jsonify({"success": False, "error": "No image file provided."}), 400
-
-    file = request.files["image"]
-    if file.filename == "" or not _allowed_file(file.filename):
-        return jsonify(
-            {"success": False, "error": "Invalid file. Supported: JPG, JPEG, PNG, WEBP."}
-        ), 400
+    """Single image inference route."""
+    if "file" not in request.files:
+        return jsonify({"success": False, "error": "No file uploaded"}), 400
+        
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"success": False, "error": "No selected file"}), 400
 
     try:
-        conf = float(request.form.get("conf_threshold", DEFAULT_CONF_THRESHOLD))
-        conf = max(0.01, min(conf, 1.0))
-    except (ValueError, TypeError):
-        conf = DEFAULT_CONF_THRESHOLD
+        # Fetch confidence threshold from request if provided
+        conf_threshold = float(request.form.get("confidence", DEFAULT_CONF_THRESHOLD))
+        
+        # Read image file into OpenCV array
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
-    try:
-        pil_image = Image.open(io.BytesIO(file.read()))
-        # Cap image resolution immediately to prevent RAM spikes on large uploads
-        pil_image.thumbnail((640, 640))
-        cv2_image = utils.pil_to_cv2(pil_image)
-        cv2_image = utils.resize_if_large(cv2_image, MAX_IMAGE_SIZE)
-    except Exception as exc:
-        logger.warning(f"Image decode error: {exc}")
-        return jsonify({"success": False, "error": "Could not read image file."}), 400
+        if image is None:
+            return jsonify({"success": False, "error": "Invalid image format"}), 400
 
-    result = model_service.run_inference(cv2_image, conf_threshold=conf)
+        # Run ONNX inference
+        result = run_inference(image, conf_threshold=conf_threshold)
 
-    if not result["success"]:
-        return jsonify({"success": False, "error": result["error"]}), 500
+        if not result["success"]:
+            return jsonify(result), 500
 
-    try:
-        b64 = utils.cv2_to_base64(result["annotated_image"])
-    except Exception as exc:
-        return jsonify({"success": False, "error": f"Image encoding failed: {exc}"}), 500
+        # Encode annotated output image to Base64 format for HTML rendering
+        _, buffer = cv2.imencode(".jpg", result["annotated_image"])
+        encoded_image = base64.b64encode(buffer).decode("utf-8")
+
+        return jsonify({
+            "success": True,
+            "image": f"data:image/jpeg;base64,{encoded_image}",
+            "detections": result["detections"],
+            "count": result["count"],
+            "inference_time_ms": result["inference_time_ms"],
+        })
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/predict/batch", methods=["POST"])
+def predict_batch():
+    """Multiple images batch processing route."""
+    files = request.files.getlist("files")
+    if not files or files[0].filename == "":
+        return jsonify({"success": False, "error": "No files uploaded"}), 400
+
+    conf_threshold = float(request.form.get("confidence", DEFAULT_CONF_THRESHOLD))
+    batch_results = []
+
+    for file in files:
+        file_bytes = np.frombuffer(file.read(), np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+        if image is not None:
+            res = run_inference(image, conf_threshold=conf_threshold)
+            if res["success"]:
+                _, buffer = cv2.imencode(".jpg", res["annotated_image"])
+                encoded = base64.b64encode(buffer).decode("utf-8")
+                
+                batch_results.append({
+                    "filename": file.filename,
+                    "image": f"data:image/jpeg;base64,{encoded}",
+                    "detections": res["detections"],
+                    "count": res["count"],
+                    "inference_time_ms": res["inference_time_ms"],
+                })
 
     return jsonify({
-        "success":           True,
-        "annotated_image":   b64,
-        "detections":        result["detections"],
-        "count":             result["count"],
-        "inference_time_ms": result["inference_time_ms"],
+        "success": True,
+        "processed_count": len(batch_results),
+        "results": batch_results,
     })
 
-
-@app.route("/api/webcam", methods=["POST"])
-def webcam():
-    """
-    Accept JSON: { "frame": "<base64 string>", "conf_threshold": 0.5 }
-    Returns annotated frame + detections.
-    """
-    data = request.get_json(silent=True)
-    if not data or "frame" not in data:
-        return jsonify({"success": False, "error": "No frame data provided."}), 400
-
-    try:
-        conf = float(data.get("conf_threshold", DEFAULT_CONF_THRESHOLD))
-        conf = max(0.01, min(conf, 1.0))
-    except (ValueError, TypeError):
-        conf = DEFAULT_CONF_THRESHOLD
-
-    try:
-        cv2_image = utils.base64_to_cv2(data["frame"])
-        cv2_image = utils.resize_if_large(cv2_image, MAX_IMAGE_SIZE)
-    except Exception as exc:
-        logger.warning(f"Webcam frame decode error: {exc}")
-        return jsonify({"success": False, "error": "Could not decode webcam frame."}), 400
-
-    result = model_service.run_inference(cv2_image, conf_threshold=conf)
-
-    if not result["success"]:
-        return jsonify({"success": False, "error": result["error"]}), 500
-
-    try:
-        b64 = utils.cv2_to_base64(result["annotated_image"], quality=80)
-    except Exception as exc:
-        return jsonify({"success": False, "error": f"Image encoding failed: {exc}"}), 500
-
-    return jsonify({
-        "success":           True,
-        "annotated_image":   b64,
-        "detections":        result["detections"],
-        "count":             result["count"],
-        "inference_time_ms": result["inference_time_ms"],
-    })
-
-
-# ── Error handlers ─────────────────────────────────────────────────────────────
-
-@app.errorhandler(404)
-def not_found(_):
-    return jsonify({"error": "Endpoint not found."}), 404
-
-
-@app.errorhandler(405)
-def method_not_allowed(_):
-    return jsonify({"error": "Method not allowed."}), 405
-
-
-@app.errorhandler(500)
-def internal_error(_):
-    return jsonify({"error": "Internal server error."}), 500
-
-
-# ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    HOST = os.environ.get("HOST", "0.0.0.0")
-    PORT = int(os.environ.get("PORT", 5000))
-
-    info = model_service.get_status()
-    logger.info(f"Model loaded={info['model_loaded']}  device={info['device']}")
-    if not info["model_loaded"]:
-        logger.warning(f"Model NOT loaded: {info.get('error')}")
-
-    if os.environ.get("RENDER") is None:
-        threading.Timer(0.5, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}")).start()
-
-    logger.info(f"Starting WeldVision AI at http://{HOST}:{PORT}")
-    app.run(
-        host=HOST,
-        port=PORT,
-        debug=False,
-        use_reloader=False,
-        threaded=True,
-    )
+    app.run(host="0.0.0.0", port=5000, debug=True)

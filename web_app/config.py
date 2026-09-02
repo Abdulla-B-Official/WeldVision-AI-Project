@@ -33,18 +33,18 @@ DEFAULT_CONF_THRESHOLD = 0.50
 MAX_IMAGE_SIZE = 640          # Cap to 640px max edge to optimize RAM usage on Render
 
 # ── Class semantics ──────────────────────────────────────────────────────────
-# Aligned with web_cam.py dataset indices:
+# Swapped index 1 and 2 to correct model dataset mapping:
 #   0 -> Bad Weld
-#   1 -> Good Weld
-#   2 -> Defect
-GOOD_IDS      = {1}       # class 1 → Good Weld
-DEFECTIVE_IDS = {0, 2}    # class 0 → Bad Weld, class 2 → Defect
+#   1 -> Defect
+#   2 -> Good Weld
+GOOD_IDS      = {2}       # class 2 → Good Weld
+DEFECTIVE_IDS = {0, 1}    # class 0 → Bad Weld, class 1 → Defect
 
 # Display names shown in bounding-box labels and detection cards.
 CLASS_DISPLAY_NAMES = {
     0: 'Bad Weld',    # class 0
-    1: 'Good Weld',   # class 1
-    2: 'Defect',      # class 2
+    1: 'Defect',      # class 1
+    2: 'Good Weld',   # class 2
 }
 
 # BGR colours for OpenCV bounding-box drawing

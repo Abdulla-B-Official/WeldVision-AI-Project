@@ -2,15 +2,15 @@ import cv2
 from ultralytics import YOLO
 
 # ── Class Mappings & Labels ──────────────────────────────────────────────────
-# Dataset mapping: 0 -> Bad Weld, 1 -> Good Weld, 2 -> Defect
-GOOD_IDS = {1}
-DEFECTIVE_IDS = {0, 2}
+# Dataset mapping: 0 -> Bad Weld, 1 -> Defect, 2 -> Good Weld
+GOOD_IDS = {2}
+DEFECTIVE_IDS = {0, 1}
 
 # Explicitly override labels in case the model's internal names are swapped
 CLASS_DISPLAY_NAMES = {
     0: "Bad Weld",
-    1: "Good Weld",
-    2: "Defect"
+    1: "Defect",
+    2: "Good Weld",
 }
 
 # ── Load Model ─────────────────────────────────────────────────────────────────
