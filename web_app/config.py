@@ -12,13 +12,13 @@ NMS_IOU_THRESHOLD = 0.45
 INPUT_SIZE = 640
 MAX_IMAGE_SIZE = 640
 
-GOOD_IDS = {1}
-DEFECTIVE_IDS = {0, 2}
+GOOD_IDS = {2}
+DEFECTIVE_IDS = {0, 1}
 
 CLASS_DISPLAY_NAMES = {
     0: "Bad Weld",
-    1: "Good Weld",
-    2: "Defect",
+    1: "Defect",
+    2: "Good Weld",
 }
 
 COLOR_GOOD = (0, 220, 100)

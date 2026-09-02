@@ -1,9 +1,13 @@
-path: datasets
-train: train/images
-val: valid/images
-test: test/images
+train: ../train/images
+val: ../valid/images
+test: ../test/images
 
-names:
-  0: Good Weld
-  1: Bad Weld
-  2: Defect
+nc: 3
+names: ['Bad Weld', 'Defect', 'Good Weld']
+
+roboflow:
+  workspace: abdulla-b-s-workspace
+  project: weld_detection-sqtp5
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/abdulla-b-s-workspace/weld_detection-sqtp5/dataset/1

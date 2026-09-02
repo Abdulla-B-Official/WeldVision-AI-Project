@@ -1,10 +1,10 @@
 """
 app.py — WeldVision AI Flask Server
 
-YOLO Class Mapping
-------------------
-0 = Bad Weld  -> DEFECT
-1 = Good Weld -> PASS
+YOLO Native Class Mapping
+-------------------------
+0 = Good Weld -> PASS
+1 = Bad Weld  -> DEFECT
 2 = Defect    -> DEFECT
 
 Overall Verdict Priority
@@ -64,8 +64,8 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 # ============================================================
 
 CLASS_MAPPING = {
-    0: "Bad Weld",
-    1: "Good Weld",
+    0: "Good Weld",
+    1: "Bad Weld",
     2: "Defect",
 }
 
@@ -77,7 +77,6 @@ CLASS_MAPPING = {
 @app.route("/", methods=["GET"])
 def index():
     """Render the WeldVision AI web application."""
-
     return render_template("index.html")
 
 
@@ -93,16 +92,12 @@ def health():
     Returns HTTP 200 even if the model has an error so that
     the frontend can distinguish API status from model status.
     """
-
     try:
         status = get_status()
-
         return jsonify(status), 200
 
     except Exception as exc:
-
         logger.exception("Health check failed.")
-
         return jsonify(
             {
                 "status": "error",
@@ -121,17 +116,12 @@ def health():
 @app.route("/api/status", methods=["GET"])
 def api_status():
     """Compatibility endpoint for the frontend."""
-
     try:
-
         status = get_status()
-
         return jsonify(status), 200
 
     except Exception as exc:
-
         logger.exception("API status check failed.")
-
         return jsonify(
             {
                 "status": "error",
@@ -150,29 +140,16 @@ def api_status():
 def decode_uploaded_image(file):
     """
     Convert uploaded file into an OpenCV BGR image.
-
-    Returns:
-        numpy.ndarray | None
     """
-
     if file is None:
         return None
 
     data = file.read()
-
     if not data:
         return None
 
-    image_array = np.frombuffer(
-        data,
-        dtype=np.uint8,
-    )
-
-    image = cv2.imdecode(
-        image_array,
-        cv2.IMREAD_COLOR,
-    )
-
+    image_array = np.frombuffer(data, dtype=np.uint8)
+    image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
     return image
 
 
@@ -184,34 +161,20 @@ def encode_image(image):
     """
     Convert OpenCV image to base64 JPEG data URL.
     """
-
     if image is None:
-        raise ValueError(
-            "Cannot encode an empty image."
-        )
+        raise ValueError("Cannot encode an empty image.")
 
     success, buffer = cv2.imencode(
         ".jpg",
         image,
-        [
-            cv2.IMWRITE_JPEG_QUALITY,
-            90,
-        ],
+        [cv2.IMWRITE_JPEG_QUALITY, 90],
     )
 
     if not success:
-        raise ValueError(
-            "Could not encode result image."
-        )
+        raise ValueError("Could not encode result image.")
 
-    encoded = base64.b64encode(
-        buffer
-    ).decode("utf-8")
-
-    return (
-        "data:image/jpeg;base64,"
-        + encoded
-    )
+    encoded = base64.b64encode(buffer).decode("utf-8")
+    return "data:image/jpeg;base64," + encoded
 
 
 # ============================================================
@@ -221,36 +184,16 @@ def encode_image(image):
 def get_confidence():
     """
     Read confidence threshold from the request.
-
-    Expected frontend value:
-        0.50
-        0.75
-        0.90
-        etc.
-
     Keeps the value between 0.05 and 0.99.
     """
-
     try:
-
         confidence = float(
-            request.form.get(
-                "confidence",
-                DEFAULT_CONF_THRESHOLD,
-            )
+            request.form.get("confidence", DEFAULT_CONF_THRESHOLD)
         )
-
-    except (
-        TypeError,
-        ValueError,
-    ):
-
+    except (TypeError, ValueError):
         confidence = DEFAULT_CONF_THRESHOLD
 
-    return max(
-        0.05,
-        min(0.99, confidence),
-    )
+    return max(0.05, min(0.99, confidence))
 
 
 # ============================================================
@@ -259,122 +202,73 @@ def get_confidence():
 
 def calculate_verdict(detections):
     """
-    Calculate overall weld condition.
+    Calculate overall weld condition directly from native model output.
 
     Mapping:
-        0 -> Bad Weld -> DEFECT
-        1 -> Good Weld -> PASS
-        2 -> Defect -> DEFECT
+        0 -> Good Weld -> PASS
+        1 -> Bad Weld  -> DEFECT
+        2 -> Defect    -> DEFECT
 
     Priority:
         DEFECT > PASS > NO_WELD
     """
-
     if not detections:
-        return (
-            "NO_WELD",
-            False,
-            False,
-        )
+        return ("NO_WELD", False, False)
 
     has_defect = any(
-        int(
-            detection.get(
-                "class_id",
-                -1,
-            )
-        ) in DEFECTIVE_IDS
-
+        int(detection.get("class_id", -1)) in DEFECTIVE_IDS
         for detection in detections
     )
 
     has_good = any(
-        int(
-            detection.get(
-                "class_id",
-                -1,
-            )
-        ) in GOOD_IDS
-
+        int(detection.get("class_id", -1)) in GOOD_IDS
         for detection in detections
     )
 
     if has_defect:
-
         verdict = "DEFECT"
-
     elif has_good:
-
         verdict = "PASS"
-
     else:
-
         verdict = "NO_WELD"
 
-    return (
-        verdict,
-        has_defect,
-        has_good,
-    )
+    return (verdict, has_defect, has_good)
 
 
 # ============================================================
 # FORMAT PREDICTION RESPONSE
 # ============================================================
 
-def build_prediction_response(
-    result,
-    include_image=True,
-):
+def build_prediction_response(result, include_image=True):
     """
     Convert model_service inference result into
     the JSON structure expected by the frontend.
     """
-
-    detections = result.get(
-        "detections",
-        [],
-    )
+    detections = result.get("detections", [])
 
     (
         verdict,
         has_defect,
         has_good,
-    ) = calculate_verdict(
-        detections
-    )
+    ) = calculate_verdict(detections)
 
     response = {
         "success": True,
-
         "detections": detections,
-
         "count": len(detections),
-
-        "inference_time_ms": result.get(
-            "inference_time_ms",
-            0,
-        ),
-
+        "inference_time_ms": result.get("inference_time_ms", 0),
         "verdict": verdict,
-
         "has_defect": has_defect,
-
         "has_good": has_good,
-
         "class_mapping": {
-            "0": "Bad Weld",
-            "1": "Good Weld",
+            "0": "Good Weld",
+            "1": "Bad Weld",
             "2": "Defect",
         },
     }
 
-    # Encode image only when requested
     if include_image:
-
-        response["image"] = encode_image(
-            result["annotated_image"]
-        )
+        response["image"] = encode_image(result["annotated_image"])
 
     return response
 
@@ -383,109 +277,46 @@ def build_prediction_response(
 # SINGLE IMAGE PREDICTION
 # ============================================================
 
-@app.route(
-    "/predict",
-    methods=["POST"],
-)
+@app.route("/predict", methods=["POST"])
 def predict():
-    """
-    Process one uploaded image.
-    """
-
-    # --------------------------------------------------------
-    # Check file
-    # --------------------------------------------------------
-
+    """Process one uploaded image."""
     if "file" not in request.files:
-
-        return jsonify(
-            {
-                "success": False,
-                "error": "No image file uploaded.",
-            }
-        ), 400
+        return jsonify({"success": False, "error": "No image file uploaded."}), 400
 
     file = request.files["file"]
-
     if not file.filename:
-
-        return jsonify(
-            {
-                "success": False,
-                "error": "No image selected.",
-            }
-        ), 400
+        return jsonify({"success": False, "error": "No image selected."}), 400
 
     try:
-
-        # ----------------------------------------------------
-        # Decode image
-        # ----------------------------------------------------
-
-        image = decode_uploaded_image(
-            file
-        )
-
+        image = decode_uploaded_image(file)
         if image is None:
-
-            return jsonify(
-                {
-                    "success": False,
-                    "error": "Invalid image file.",
-                }
-            ), 400
-
-        # ----------------------------------------------------
-        # Confidence
-        # ----------------------------------------------------
+            return jsonify({"success": False, "error": "Invalid image file."}), 400
 
         confidence = get_confidence()
 
         logger.info(
-            "Prediction request: "
-            "filename=%s size=%sx%s confidence=%.2f",
+            "Prediction request: filename=%s size=%sx%s confidence=%.2f",
             file.filename,
             image.shape[1],
             image.shape[0],
             confidence,
         )
 
-        # ----------------------------------------------------
-        # YOLO inference
-        # ----------------------------------------------------
+        result = run_inference(image, confidence_threshold=confidence)
 
-        result = run_inference(
-            image,
-            confidence_threshold=confidence,
-        )
-
-        # ----------------------------------------------------
-        # Build response
-        # ----------------------------------------------------
-
-        response = build_prediction_response(
-            result,
-            include_image=True,
-        )
+        response = build_prediction_response(result, include_image=True)
 
         logger.info(
-            "Prediction successful: "
-            "verdict=%s detections=%d time=%.2fms",
+            "Prediction successful: verdict=%s detections=%d time=%.2fms",
             response["verdict"],
             response["count"],
             response["inference_time_ms"],
         )
 
-        return jsonify(
-            response
-        ), 200
+        return jsonify(response), 200
 
     except Exception as exc:
-
-        logger.exception(
-            "Inference failed for /predict."
-        )
-
+        logger.exception("Inference failed for /predict.")
         return jsonify(
             {
                 "success": False,
@@ -499,91 +330,42 @@ def predict():
 # BATCH PREDICTION
 # ============================================================
 
-@app.route(
-    "/predict/batch",
-    methods=["POST"],
-)
+@app.route("/predict/batch", methods=["POST"])
 def predict_batch():
-    """
-    Process multiple uploaded images.
-    """
-
-    files = request.files.getlist(
-        "files"
-    )
-
+    """Process multiple uploaded images."""
+    files = request.files.getlist("files")
     if not files:
-
-        return jsonify(
-            {
-                "success": False,
-                "error": "No files uploaded.",
-            }
-        ), 400
+        return jsonify({"success": False, "error": "No files uploaded."}), 400
 
     try:
-
         confidence = get_confidence()
-
         results = []
-
         failed_files = []
 
-        # ----------------------------------------------------
-        # Process files
-        # ----------------------------------------------------
-
         for file in files:
-
             if not file.filename:
-
                 continue
 
             try:
-
-                # Decode
-                image = decode_uploaded_image(
-                    file
-                )
-
+                image = decode_uploaded_image(file)
                 if image is None:
-
                     failed_files.append(
                         {
                             "filename": file.filename,
                             "error": "Invalid image file.",
                         }
                     )
-
                     continue
 
-                # Inference
-                result = run_inference(
-                    image,
-                    confidence_threshold=confidence,
-                )
+                result = run_inference(image, confidence_threshold=confidence)
 
-                # Response
-                response = build_prediction_response(
-                    result,
-                    include_image=True,
-                )
+                response = build_prediction_response(result, include_image=True)
+                response["filename"] = file.filename
 
-                response["filename"] = (
-                    file.filename
-                )
-
-                results.append(
-                    response
-                )
+                results.append(response)
 
             except Exception as exc:
-
-                logger.exception(
-                    "Batch inference failed: %s",
-                    file.filename,
-                )
-
+                logger.exception("Batch inference failed: %s", file.filename)
                 failed_files.append(
                     {
                         "filename": file.filename,
@@ -592,34 +374,18 @@ def predict_batch():
                     }
                 )
 
-        # ----------------------------------------------------
-        # Return results
-        # ----------------------------------------------------
-
         return jsonify(
             {
                 "success": True,
-
-                "processed_count":
-                    len(results),
-
-                "failed_count":
-                    len(failed_files),
-
-                "results":
-                    results,
-
-                "failed_files":
-                    failed_files,
+                "processed_count": len(results),
+                "failed_count": len(failed_files),
+                "results": results,
+                "failed_files": failed_files,
             }
         ), 200
 
     except Exception as exc:
-
-        logger.exception(
-            "Batch prediction failed."
-        )
-
+        logger.exception("Batch prediction failed.")
         return jsonify(
             {
                 "success": False,
@@ -630,18 +396,15 @@ def predict_batch():
 
 
 # ============================================================
-# FILE TOO LARGE
+# FILE TOO LARGE HANDLER
 # ============================================================
 
 @app.errorhandler(413)
 def file_too_large(error):
-
     return jsonify(
         {
             "success": False,
-            "error":
-                "Image is too large. "
-                "Maximum size is 10 MB.",
+            "error": "Image is too large. Maximum size is 10 MB.",
         }
     ), 413
 
@@ -652,11 +415,7 @@ def file_too_large(error):
 
 @app.errorhandler(500)
 def internal_server_error(error):
-
-    logger.exception(
-        "Internal server error."
-    )
-
+    logger.exception("Internal server error.")
     return jsonify(
         {
             "success": False,
@@ -670,14 +429,7 @@ def internal_server_error(error):
 # ============================================================
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            5000,
-        )
-    )
-
+    port = int(os.environ.get("PORT", 5000))
     app.run(
         host="0.0.0.0",
         port=port,
