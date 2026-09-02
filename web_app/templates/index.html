@@ -3,378 +3,1312 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+
   <title>WeldVision AI — Industrial Weld Quality Inspection</title>
-  <meta name="description" content="Industrial AI-powered weld quality inspection and real-time defect detection using YOLOv8."/>
+
+  <meta
+    name="description"
+    content="AI-powered weld quality inspection using YOLOv8."
+  />
+
   <meta name="theme-color" content="#0f172a"/>
 
-  <!-- Preconnect & Fonts -->
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
 
-  <!-- Application Stylesheet -->
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Main CSS -->
+  <link
+    rel="stylesheet"
+    href="{{ url_for('static', filename='css/style.css') }}"
+  />
 </head>
+
 <body>
+
 <div class="dashboard">
 
-  <!-- ==================== SIDEBAR NAVIGATION ==================== -->
-  <aside class="sidebar" aria-label="Inspection Controls">
+  <!-- =====================================================
+       SIDEBAR
+       ===================================================== -->
 
-    <!-- Brand Logo -->
+  <aside
+    class="sidebar"
+    aria-label="Inspection Controls"
+  >
+
+    <!-- BRAND -->
+
     <div class="sidebar-logo">
-      <div class="logo-icon" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+
+      <div
+        class="logo-icon"
+        aria-hidden="true"
+      >
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+          <path d="M2 17l10 5 10-5"/>
+          <path d="M2 12l10 5 10-5"/>
         </svg>
       </div>
+
       <div class="logo-text">
-        <span class="logo-name">WeldVision</span>
-        <span class="logo-sub">AI INSPECTION</span>
+        <span class="logo-name">
+          WeldVision
+        </span>
+
+        <span class="logo-sub">
+          AI INSPECTION
+        </span>
       </div>
+
     </div>
 
-    <!-- Mode Selector Navigation -->
-    <div class="nav-section-label" id="nav-label">INSPECTION MODE</div>
-    <nav class="sidebar-nav" aria-labelledby="nav-label">
-      <button id="tab-image" class="nav-item active" type="button" aria-selected="true" role="tab">
-        <span class="nav-icon" aria-hidden="true">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
+
+    <!-- =================================================
+         MODE SELECTOR
+         ================================================= -->
+
+    <div
+      class="nav-section-label"
+      id="nav-label"
+    >
+      INSPECTION MODE
+    </div>
+
+    <nav
+      class="sidebar-nav"
+      aria-labelledby="nav-label"
+    >
+
+      <button
+        id="tab-image"
+        class="nav-item active"
+        type="button"
+        aria-selected="true"
+        role="tab"
+      >
+
+        <span
+          class="nav-icon"
+          aria-hidden="true"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <rect
+              x="3"
+              y="3"
+              width="18"
+              height="18"
+              rx="2"
+            />
+
+            <circle
+              cx="8.5"
+              cy="8.5"
+              r="1.5"
+            />
+
+            <path
+              d="M21 15l-5-5L5 21"
+            />
           </svg>
         </span>
+
         Image Inspection
+
       </button>
-      <button id="tab-webcam" class="nav-item" type="button" aria-selected="false" role="tab">
-        <span class="nav-icon" aria-hidden="true">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+
+
+      <button
+        id="tab-webcam"
+        class="nav-item"
+        type="button"
+        aria-selected="false"
+        role="tab"
+      >
+
+        <span
+          class="nav-icon"
+          aria-hidden="true"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              d="M23 7l-7 5 7 5V7z"
+            />
+
+            <rect
+              x="1"
+              y="5"
+              width="15"
+              height="14"
+              rx="2"
+            />
           </svg>
         </span>
+
         Live Webcam
+
       </button>
+
     </nav>
 
-    <!-- Image Mode Controls -->
-    <section id="image-controls" class="sidebar-controls" aria-label="Image Controls">
-      <div class="ctrl-section-label">CONTROLS</div>
-      
-      <button id="upload-btn" class="ctrl-btn secondary full" type="button">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+
+    <!-- =================================================
+         IMAGE CONTROLS
+         ================================================= -->
+
+    <section
+      id="image-controls"
+      class="sidebar-controls"
+      aria-label="Image Controls"
+    >
+
+      <div class="ctrl-section-label">
+        CONTROLS
+      </div>
+
+
+      <button
+        id="upload-btn"
+        class="ctrl-btn secondary full"
+        type="button"
+      >
+
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path
+            d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
+          />
+
+          <polyline
+            points="17 8 12 3 7 8"
+          />
+
+          <line
+            x1="12"
+            y1="3"
+            x2="12"
+            y2="15"
+          />
         </svg>
+
         Upload Image
+
       </button>
-      <input id="file-input" type="file" accept=".jpg,.jpeg,.png,.webp,.bmp" style="display:none" aria-label="Upload image file"/>
-      
-      <button id="detect-btn" class="ctrl-btn primary full" type="button" disabled>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+
+
+      <input
+        id="file-input"
+        type="file"
+        accept=".jpg,.jpeg,.png,.webp,.bmp"
+        style="display:none"
+      />
+
+
+      <button
+        id="detect-btn"
+        class="ctrl-btn primary full"
+        type="button"
+        disabled
+      >
+
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle
+            cx="11"
+            cy="11"
+            r="8"
+          />
+
+          <path
+            d="M21 21l-4.35-4.35"
+          />
         </svg>
+
         Inspect Weld
+
       </button>
-      
-      <button id="clear-btn" class="ctrl-btn ghost full hidden" type="button">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>
+
+
+      <button
+        id="clear-btn"
+        class="ctrl-btn ghost full hidden"
+        type="button"
+      >
+
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <polyline
+            points="3 6 5 6 21 6"
+          />
+
+          <path
+            d="M19 6l-1 14H6L5 6"
+          />
+
+          <path
+            d="M10 11v6"
+          />
+
+          <path
+            d="M14 11v6"
+          />
         </svg>
+
         Clear
+
       </button>
 
-      <div class="ctrl-divider" role="separator"></div>
+
+      <div
+        class="ctrl-divider"
+        role="separator"
+      ></div>
+
 
       <div class="conf-block">
+
         <div class="conf-header">
-          <label for="img-conf-slider" class="conf-label">Confidence Threshold</label>
-          <output id="img-conf-value" class="conf-val" for="img-conf-slider">50%</output>
+
+          <label
+            for="img-conf-slider"
+            class="conf-label"
+          >
+            Confidence Threshold
+          </label>
+
+          <output
+            id="img-conf-value"
+            class="conf-val"
+            for="img-conf-slider"
+          >
+            50%
+          </output>
+
         </div>
-        <input id="img-conf-slider" type="range" min="0.05" max="0.95" step="0.05" value="0.50" class="conf-slider" style="--val:50%"/>
+
+
+        <input
+          id="img-conf-slider"
+          type="range"
+          min="0.05"
+          max="0.95"
+          step="0.05"
+          value="0.50"
+          class="conf-slider"
+        />
+
       </div>
+
     </section>
 
-    <!-- Webcam Mode Controls -->
-    <section id="webcam-controls" class="sidebar-controls hidden" aria-label="Webcam Controls">
-      <div class="ctrl-section-label">CONTROLS</div>
-      
-      <button id="start-webcam-btn" class="ctrl-btn primary full" type="button">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polygon points="5 3 19 12 5 21 5 3"/>
+
+    <!-- =================================================
+         WEBCAM CONTROLS
+         ================================================= -->
+
+    <section
+      id="webcam-controls"
+      class="sidebar-controls hidden"
+      aria-label="Webcam Controls"
+    >
+
+      <div class="ctrl-section-label">
+        CONTROLS
+      </div>
+
+
+      <button
+        id="start-webcam-btn"
+        class="ctrl-btn primary full"
+        type="button"
+      >
+
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <polygon
+            points="5 3 19 12 5 21 5 3"
+          />
         </svg>
+
         Start Camera
-      </button>
-      
-      <button id="stop-webcam-btn" class="ctrl-btn danger full hidden" type="button">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="6" y="6" width="12" height="12"/>
-        </svg>
-        Stop Camera
+
       </button>
 
-      <div class="ctrl-divider" role="separator"></div>
+
+      <button
+        id="stop-webcam-btn"
+        class="ctrl-btn danger full hidden"
+        type="button"
+      >
+
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <rect
+            x="6"
+            y="6"
+            width="12"
+            height="12"
+          />
+        </svg>
+
+        Stop Camera
+
+      </button>
+
+
+      <div
+        class="ctrl-divider"
+        role="separator"
+      ></div>
+
 
       <div class="conf-block">
+
         <div class="conf-header">
-          <label for="webcam-conf-slider" class="conf-label">Confidence Threshold</label>
-          <output id="webcam-conf-value" class="conf-val" for="webcam-conf-slider">50%</output>
+
+          <label
+            for="webcam-conf-slider"
+            class="conf-label"
+          >
+            Confidence Threshold
+          </label>
+
+          <output
+            id="webcam-conf-value"
+            class="conf-val"
+            for="webcam-conf-slider"
+          >
+            50%
+          </output>
+
         </div>
-        <input id="webcam-conf-slider" type="range" min="0.05" max="0.95" step="0.05" value="0.50" class="conf-slider" style="--val:50%"/>
-        <p id="webcam-slider-hint" class="slider-hint hidden">Stop camera to adjust</p>
+
+
+        <input
+          id="webcam-conf-slider"
+          type="range"
+          min="0.05"
+          max="0.95"
+          step="0.05"
+          value="0.50"
+          class="conf-slider"
+        />
+
+        <p
+          id="webcam-slider-hint"
+          class="slider-hint hidden"
+        >
+          Stop camera to adjust
+        </p>
+
       </div>
+
     </section>
 
-    <!-- System Status Footer -->
+
+    <!-- =================================================
+         SYSTEM STATUS
+         ================================================= -->
+
     <footer class="sidebar-footer">
-      <div class="sidebar-footer-label">SYSTEM</div>
-      <div class="sys-item">
-        <span class="sys-dot" id="sys-api-dot" aria-hidden="true"></span>
-        <span class="sys-text">API Server</span>
+
+      <div class="sidebar-footer-label">
+        SYSTEM
       </div>
+
+
       <div class="sys-item">
-        <span class="sys-dot" id="sys-model-dot" aria-hidden="true"></span>
-        <span class="sys-text">YOLO Model</span>
+
+        <span
+          class="sys-dot"
+          id="sys-api-dot"
+        ></span>
+
+        <span class="sys-text">
+          API Server
+        </span>
+
       </div>
+
+
       <div class="sys-item">
-        <span class="sys-dot green" aria-hidden="true"></span>
-        <span class="sys-text" id="sys-device-label">Device: —</span>
+
+        <span
+          class="sys-dot"
+          id="sys-model-dot"
+        ></span>
+
+        <span class="sys-text">
+          YOLO Model
+        </span>
+
       </div>
+
+
+      <div class="sys-item">
+
+        <span
+          class="sys-dot green"
+        ></span>
+
+        <span
+          class="sys-text"
+          id="sys-device-label"
+        >
+          Device: —
+        </span>
+
+      </div>
+
     </footer>
 
   </aside>
 
-  <!-- ==================== MAIN WORKSPACE ==================== -->
+
+  <!-- =====================================================
+       MAIN AREA
+       ===================================================== -->
+
   <main class="main-area">
 
-    <!-- Top Navigation Header -->
+
+    <!-- =================================================
+         TOP BAR
+         ================================================= -->
+
     <header class="topbar">
+
       <div class="topbar-left">
-        <h1 class="page-title">Vision Inspection</h1>
-        <p class="page-sub">AI-powered weld quality detection</p>
+
+        <h1 class="page-title">
+          Vision Inspection
+        </h1>
+
+        <p class="page-sub">
+          AI-powered weld quality detection
+        </p>
+
       </div>
-      <div class="topbar-right" aria-live="polite">
-        <span id="api-badge" class="status-pill muted">
-          <span class="pill-dot" aria-hidden="true"></span>
-          <span class="pill-text">API Checking…</span>
+
+
+      <div
+        class="topbar-right"
+        aria-live="polite"
+      >
+
+        <span
+          id="api-badge"
+          class="status-pill muted"
+        >
+
+          <span
+            class="pill-dot"
+          ></span>
+
+          <span class="pill-text">
+            API Checking…
+          </span>
+
         </span>
-        <span id="model-badge" class="status-pill muted">
-          <span class="pill-dot" aria-hidden="true"></span>
-          <span class="pill-text">Model Unknown</span>
+
+
+        <span
+          id="model-badge"
+          class="status-pill muted"
+        >
+
+          <span
+            class="pill-dot"
+          ></span>
+
+          <span class="pill-text">
+            Model Checking…
+          </span>
+
         </span>
+
       </div>
+
     </header>
 
-    <!-- Workspace Grid Layout -->
+
+    <!-- =================================================
+         WORKSPACE
+         ================================================= -->
+
     <div class="workspace">
 
-      <!-- Central Inspection Stage -->
-      <section class="inspection-col" aria-label="Inspection Stage">
 
-        <!-- Stage Header -->
+      <!-- =================================================
+           INSPECTION VIEWER
+           ================================================= -->
+
+      <section
+        class="inspection-col"
+        aria-label="Inspection Stage"
+      >
+
         <div class="viewer-header">
+
           <div class="viewer-header-left">
-            <span class="viewer-status-dot" id="viewer-status-dot" aria-hidden="true"></span>
-            <h2 class="viewer-title" id="viewer-title">Inspection Viewer</h2>
+
+            <span
+              class="viewer-status-dot"
+              id="viewer-status-dot"
+            ></span>
+
+            <h2
+              class="viewer-title"
+              id="viewer-title"
+            >
+              Inspection Viewer
+            </h2>
+
           </div>
-          <span class="viewer-mode-tag" id="viewer-mode-tag">IMAGE MODE</span>
+
+
+          <span
+            class="viewer-mode-tag"
+            id="viewer-mode-tag"
+          >
+            IMAGE MODE
+          </span>
+
         </div>
 
-        <!-- Alert Notifications -->
-        <div id="img-banner" class="alert-banner hidden" role="alert" aria-live="assertive"></div>
-        <div id="webcam-banner" class="alert-banner hidden" role="alert" aria-live="assertive"></div>
 
-        <!-- Viewport Display Container -->
+        <!-- IMAGE ALERT -->
+
+        <div
+          id="img-banner"
+          class="alert-banner hidden"
+          role="alert"
+        ></div>
+
+
+        <!-- WEBCAM ALERT -->
+
+        <div
+          id="webcam-banner"
+          class="alert-banner hidden"
+          role="alert"
+        ></div>
+
+
+        <!-- =================================================
+             VIEWER STAGE
+             ================================================= -->
+
         <div class="viewer-stage">
 
-          <!-- Image Inspection View -->
-          <div id="panel-image" class="panel-fill">
-            
-            <!-- File Drop Zone -->
-            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload weld image by clicking or dropping file">
+
+          <!-- =================================================
+               IMAGE PANEL
+               ================================================= -->
+
+          <div
+            id="panel-image"
+            class="panel-fill"
+          >
+
+
+            <!-- DROP ZONE -->
+
+            <div
+              id="drop-zone"
+              class="drop-zone"
+              role="button"
+              tabindex="0"
+            >
+
               <div class="drop-zone-inner">
-                <div id="drop-icon" class="drop-big-icon" aria-hidden="true">
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+
+                <div
+                  id="drop-icon"
+                  class="drop-big-icon"
+                >
+
+                  <svg
+                    width="48"
+                    height="48"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                  >
+
+                    <path
+                      d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"
+                    />
+
+                    <polyline
+                      points="17 8 12 3 7 8"
+                    />
+
+                    <line
+                      x1="12"
+                      y1="3"
+                      x2="12"
+                      y2="15"
+                    />
+
                   </svg>
+
                 </div>
-                <div id="drop-title" class="drop-main-text">Drop weld image here</div>
-                <div id="drop-subtitle" class="drop-hint-text">or click to browse files</div>
-                <div id="drop-formats" class="drop-formats-text">JPG · PNG · WEBP · BMP</div>
+
+
+                <div
+                  id="drop-title"
+                  class="drop-main-text"
+                >
+                  Drop weld image here
+                </div>
+
+
+                <div
+                  id="drop-subtitle"
+                  class="drop-hint-text"
+                >
+                  or click to browse files
+                </div>
+
+
+                <div
+                  id="drop-formats"
+                  class="drop-formats-text"
+                >
+                  JPG · PNG · WEBP · BMP
+                </div>
+
               </div>
+
             </div>
 
-            <!-- Side-by-Side Dual Image Comparison Area -->
-            <div id="image-viewer-area" class="image-viewer-area hidden">
+
+            <!-- =================================================
+                 IMAGE COMPARISON
+                 ================================================= -->
+
+            <div
+              id="image-viewer-area"
+              class="image-viewer-area hidden"
+            >
+
               <div class="dual-grid">
 
-                <!-- Source Image -->
+
+                <!-- ORIGINAL -->
+
                 <figure class="dual-panel">
-                  <figcaption class="dual-label">Original Image</figcaption>
+
+                  <figcaption class="dual-label">
+                    Original Image
+                  </figcaption>
+
                   <div class="dual-stage">
-                    <img id="original-image" class="dual-img" alt="Original weld source input"/>
+
+                    <img
+                      id="original-image"
+                      class="dual-img"
+                      alt="Original weld image"
+                    />
+
                   </div>
+
                 </figure>
 
-                <!-- AI Model Output Image -->
+
+                <!-- DETECTED -->
+
                 <figure class="dual-panel">
-                  <figcaption class="dual-label">Detected Image</figcaption>
+
+                  <figcaption class="dual-label">
+                    AI Detection
+                  </figcaption>
+
                   <div class="dual-stage">
-                    <img id="annotated-image" class="dual-img hidden" alt="YOLO detection annotated output"/>
-                    <div id="detected-placeholder" class="dual-placeholder">
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35" aria-hidden="true">
-                        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+
+                    <img
+                      id="annotated-image"
+                      class="dual-img hidden"
+                      alt="YOLO weld detection result"
+                    />
+
+
+                    <div
+                      id="detected-placeholder"
+                      class="dual-placeholder"
+                    >
+
+                      <svg
+                        width="28"
+                        height="28"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                      >
+
+                        <circle
+                          cx="11"
+                          cy="11"
+                          r="8"
+                        />
+
+                        <path
+                          d="M21 21l-4.35-4.35"
+                        />
+
                       </svg>
-                      <span>Run Inspect Weld to see results</span>
+
+                      <span>
+                        Click "Inspect Weld" to analyze
+                      </span>
+
                     </div>
+
                   </div>
+
                 </figure>
 
               </div>
 
-              <!-- Overlay Verdict Badge -->
-              <div id="img-verdict-badge" class="img-verdict-badge hidden" aria-live="polite"></div>
 
-              <!-- Hidden Compatibility Triggers -->
-              <div id="view-toggle" class="hidden" aria-hidden="true">
-                <button id="show-original-btn" type="button" tabindex="-1"></button>
-                <button id="show-annotated-btn" type="button" tabindex="-1"></button>
-              </div>
+              <!-- VERDICT BADGE -->
+
+              <div
+                id="img-verdict-badge"
+                class="img-verdict-badge hidden"
+              ></div>
+
             </div>
+
           </div>
 
-          <!-- Live Webcam Feed View -->
-          <div id="panel-webcam" class="panel-fill hidden">
+
+          <!-- =================================================
+               WEBCAM PANEL
+               ================================================= -->
+
+          <div
+            id="panel-webcam"
+            class="panel-fill hidden"
+          >
+
             <div class="webcam-stage">
-              <video id="webcam-video" muted playsinline class="stage-img hidden"></video>
-              <img id="webcam-annotated" class="stage-img hidden" alt="Live inference overlay feed"/>
-              
-              <!-- Idle State Visual -->
-              <div id="webcam-idle" class="webcam-idle-overlay">
-                <div class="idle-icon" aria-hidden="true">
-                  <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3">
-                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+
+
+              <!-- Real browser camera -->
+
+              <video
+                id="webcam-video"
+                muted
+                playsinline
+                autoplay
+                class="stage-img hidden"
+              ></video>
+
+
+              <!-- AI annotated image -->
+
+              <img
+                id="webcam-annotated"
+                class="stage-img hidden"
+                alt="Live weld inspection"
+              />
+
+
+              <!-- CAMERA IDLE -->
+
+              <div
+                id="webcam-idle"
+                class="webcam-idle-overlay"
+              >
+
+                <div class="idle-icon">
+
+                  <svg
+                    width="56"
+                    height="56"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1"
+                  >
+
+                    <path
+                      d="M23 7l-7 5 7 5V7z"
+                    />
+
+                    <rect
+                      x="1"
+                      y="5"
+                      width="15"
+                      height="14"
+                      rx="2"
+                    />
+
                   </svg>
+
                 </div>
-                <div class="idle-title">Camera Inactive</div>
-                <div class="idle-sub">Click "Start Camera" to begin live inspection</div>
+
+
+                <div class="idle-title">
+                  Camera Inactive
+                </div>
+
+
+                <div class="idle-sub">
+                  Click "Start Camera" to begin live inspection
+                </div>
+
               </div>
 
-              <!-- Video Badges Overlay -->
-              <div id="webcam-live-badge" class="live-badge hidden">
-                <span class="live-pulse" aria-hidden="true"></span> LIVE
+
+              <!-- LIVE BADGE -->
+
+              <div
+                id="webcam-live-badge"
+                class="live-badge hidden"
+              >
+
+                <span
+                  class="live-pulse"
+                ></span>
+
+                LIVE
+
               </div>
-              <div id="webcam-fps-badge" class="fps-badge hidden" aria-live="off">— FPS</div>
+
+
+              <!-- FPS -->
+
+              <div
+                id="webcam-fps-badge"
+                class="fps-badge hidden"
+              >
+                — FPS
+              </div>
+
             </div>
+
           </div>
 
         </div>
+
       </section>
 
-      <!-- Right Analytics Sidebar -->
-      <aside class="results-col" aria-label="Inspection Analysis">
 
-        <!-- Inspection Verdict Card -->
-        <article id="verdict-card" class="verdict-card idle" aria-live="polite">
-          <div class="vc-eyebrow">INSPECTION RESULT</div>
+      <!-- =================================================
+           RESULTS SIDEBAR
+           ================================================= -->
+
+      <aside
+        class="results-col"
+        aria-label="Inspection Analysis"
+      >
+
+
+        <!-- =================================================
+             VERDICT CARD
+             ================================================= -->
+
+        <article
+          id="verdict-card"
+          class="verdict-card idle"
+        >
+
+          <div class="vc-eyebrow">
+            INSPECTION RESULT
+          </div>
+
+
           <div class="vc-icon-ring">
-            <span id="verdict-icon" class="vc-icon" aria-hidden="true">○</span>
+
+            <span
+              id="verdict-icon"
+              class="vc-icon"
+            >
+              ○
+            </span>
+
           </div>
-          <div id="verdict-label" class="vc-label">AWAITING</div>
-          <div id="verdict-conf-display" class="vc-conf">—</div>
-          <div id="verdict-sub" class="vc-sub">Upload an image to inspect</div>
+
+
+          <div
+            id="verdict-label"
+            class="vc-label"
+          >
+            AWAITING
+          </div>
+
+
+          <div
+            id="verdict-conf-display"
+            class="vc-conf"
+          >
+            —
+          </div>
+
+
+          <div
+            id="verdict-sub"
+            class="vc-sub"
+          >
+            Upload an image to inspect
+          </div>
+
         </article>
 
-        <!-- Detection Results Listing -->
+
+        <!-- =================================================
+             DETECTION DETAILS
+             ================================================= -->
+
         <article class="result-card">
+
           <header class="rc-header">
-            <h3 class="rc-title">Detection Details</h3>
+
+            <h3 class="rc-title">
+              Detection Details
+            </h3>
+
+
             <div class="rc-chips">
+
               <span class="rc-chip">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                <b id="stat-count">0</b> objects
+
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+
+                  <circle
+                    cx="11"
+                    cy="11"
+                    r="8"
+                  />
+
+                  <path
+                    d="M21 21l-4.35-4.35"
+                  />
+
+                </svg>
+
+                <b id="stat-count">
+                  0
+                </b>
+
+                objects
+
               </span>
+
+
               <span class="rc-chip">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-                <b id="stat-inference">—</b> ms
+
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+
+                  <polygon
+                    points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"
+                  />
+
+                </svg>
+
+                <b id="stat-inference">
+                  —
+                </b>
+
+                ms
+
               </span>
+
             </div>
+
           </header>
-          <div id="detection-cards" class="detection-list" aria-live="polite">
-            <div class="det-empty">No detections yet</div>
+
+
+          <div
+            id="detection-cards"
+            class="detection-list"
+          >
+
+            <div class="det-empty">
+              No detections yet
+            </div>
+
           </div>
+
         </article>
 
-        <!-- System & Model Performance -->
-        <article class="result-card" id="performance-card">
+
+        <!-- =================================================
+             MODEL STATUS
+             ================================================= -->
+
+        <article
+          class="result-card"
+          id="performance-card"
+        >
+
           <header class="rc-header">
-            <h3 class="rc-title">Model Performance</h3>
+
+            <h3 class="rc-title">
+              System Status
+            </h3>
+
           </header>
+
+
           <div class="perf-list">
+
             <div class="perf-row">
-              <span class="perf-label">Device</span>
-              <span id="perf-device" class="perf-value mono">—</span>
+
+              <span class="perf-label">
+                Device
+              </span>
+
+              <span
+                id="perf-device"
+                class="perf-value mono"
+              >
+                —
+              </span>
+
             </div>
+
+
             <div class="perf-row">
-              <span class="perf-label">Model</span>
-              <span id="perf-model" class="perf-value mono">best.pt</span>
+
+              <span class="perf-label">
+                Model
+              </span>
+
+              <span
+                id="perf-model"
+                class="perf-value mono"
+              >
+                best.onnx
+              </span>
+
             </div>
+
+
             <div class="perf-row">
-              <span class="perf-label">Status</span>
-              <span id="perf-status" class="perf-value">Checking…</span>
+
+              <span class="perf-label">
+                Status
+              </span>
+
+              <span
+                id="perf-status"
+                class="perf-value"
+              >
+                Checking…
+              </span>
+
             </div>
+
           </div>
-          <div id="webcam-stats-body" class="webcam-live-stats hidden"></div>
+
+
+          <div
+            id="webcam-stats-body"
+            class="webcam-live-stats hidden"
+          ></div>
+
         </article>
 
-        <!-- Dynamic Live Webcam Stream Detections -->
-        <article id="webcam-detection-cards-section" class="result-card hidden">
+
+        <!-- =================================================
+             LIVE DETECTIONS
+             ================================================= -->
+
+        <article
+          id="webcam-detection-cards-section"
+          class="result-card hidden"
+        >
+
           <header class="rc-header">
-            <h3 class="rc-title">Live Detections</h3>
-          </header>
-          <div id="webcam-detection-cards" class="detection-list" aria-live="polite"></div>
-        </article>
 
-        <!-- Hidden DOM Containers for JS State Maintenance -->
-        <div id="stat-verdict-chip" class="hidden" aria-hidden="true">
-          <span id="stat-verdict-icon"></span>
-          <span id="stat-verdict-value"></span>
-        </div>
-        <div id="image-panels-section" class="hidden" aria-hidden="true">
-          <div id="image-panels-grid"></div>
-          <div id="annotated-panel" class="hidden"></div>
-          <div id="detection-section" class="hidden"></div>
-        </div>
+            <h3 class="rc-title">
+              Live Detections
+            </h3>
+
+          </header>
+
+
+          <div
+            id="webcam-detection-cards"
+            class="detection-list"
+          ></div>
+
+        </article>
 
       </aside>
 
     </div>
 
-    <!-- Application Footer Bar -->
+
+    <!-- =====================================================
+         FOOTER
+         ===================================================== -->
+
     <footer class="statusbar">
+
+
       <div class="sb-item">
-        <span class="sb-dot" id="bar-api-dot" aria-hidden="true"></span>
-        <span id="bar-api-text">API Offline</span>
+
+        <span
+          class="sb-dot"
+          id="bar-api-dot"
+        ></span>
+
+        <span id="bar-api-text">
+          API Checking
+        </span>
+
       </div>
+
+
       <div class="sb-item">
-        <span class="sb-dot" id="bar-model-dot" aria-hidden="true"></span>
-        <span id="bar-model-text">Model Unknown</span>
+
+        <span
+          class="sb-dot"
+          id="bar-model-dot"
+        ></span>
+
+        <span id="bar-model-text">
+          Model Checking
+        </span>
+
       </div>
+
+
       <div class="sb-item">
-        <span class="sb-dot" id="bar-camera-dot" aria-hidden="true"></span>
-        <span id="bar-camera-text">Camera Idle</span>
+
+        <span
+          class="sb-dot"
+          id="bar-camera-dot"
+        ></span>
+
+        <span id="bar-camera-text">
+          Camera Idle
+        </span>
+
       </div>
+
+
       <div class="sb-item">
-        <span class="sb-dot green pulse" aria-hidden="true"></span>
-        <span>System Ready</span>
+
+        <span
+          class="sb-dot green pulse"
+        ></span>
+
+        <span>
+          WeldVision AI
+        </span>
+
       </div>
-      <div class="sb-version">WeldVision AI v1.0 · YOLOv8</div>
+
+
+      <div class="sb-version">
+        WeldVision AI v1.0 · YOLOv8
+      </div>
+
     </footer>
 
   </main>
 
 </div>
 
-<!-- Hidden Canvas for Video Frame Capture Processing -->
-<canvas id="capture-canvas" style="display:none"></canvas>
 
-<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+<!-- =====================================================
+     HIDDEN CANVAS
+     ===================================================== -->
+
+<canvas
+  id="capture-canvas"
+  style="display:none"
+></canvas>
+
+
+<!-- =====================================================
+     APPLICATION JAVASCRIPT
+     ===================================================== -->
+
+<script
+  src="{{ url_for('static', filename='js/script.js') }}"
+></script>
+
 </body>
 </html>

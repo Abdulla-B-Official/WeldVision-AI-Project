@@ -1,425 +1,3059 @@
-/**
- * WeldVision AI - Industrial Inspection Dashboard Controller
- */
+/*
+===========================================================
+WeldVision AI
+Frontend Controller
 
-// --- Global Application State ---
-const state = {
-  currentFile: null,
-  currentImageObjectUrl: null,
-  annotatedImageDataUrl: null,
-  activeView: 'annotated', // 'raw' | 'annotated'
-  isWebcamActive: false,
-  webcamStream: null,
-  isInspecting: false,
-  inspectionResults: null
-};
+CORRECT CLASS MAPPING:
 
-// --- DOM Element References ---
-const elements = {
-  // Upload & Inputs
-  dropZone: document.getElementById('dropZone'),
-  fileInput: document.getElementById('fileInput'),
-  selectFileBtn: document.getElementById('selectFileBtn'),
-  
-  // Webcam Controls
-  toggleWebcamBtn: document.getElementById('toggleWebcamBtn'),
-  captureWebcamBtn: document.getElementById('captureWebcamBtn'),
-  webcamVideo: document.getElementById('webcamVideo'),
-  hiddenCanvas: document.getElementById('hiddenCanvas'),
+0 = Bad Weld  -> DEFECT
+1 = Good Weld -> GOOD
+2 = Defect    -> DEFECT
 
-  // Display & Canvas Controls
-  imagePreviewContainer: document.getElementById('imagePreviewContainer'),
-  previewImage: document.getElementById('previewImage'),
-  annotationCanvas: document.getElementById('annotationCanvas'),
-  toggleViewBtn: document.getElementById('toggleViewBtn'),
-  viewModeLabel: document.getElementById('viewModeLabel'),
+API:
+GET  /health
+POST /predict
 
-  // Control Buttons
-  runInspectionBtn: document.getElementById('runInspectionBtn'),
-  resetBtn: document.getElementById('resetBtn'),
-  exportResultsBtn: document.getElementById('exportResultsBtn'),
+Webcam:
+Browser camera -> Canvas -> /predict
+===========================================================
+*/
 
-  // Output Panels
-  statusBadge: document.getElementById('statusBadge'),
-  confidenceMetric: document.getElementById('confidenceMetric'),
-  defectCountMetric: document.getElementById('defectCountMetric'),
-  processingTimeMetric: document.getElementById('processingTimeMetric'),
-  defectListContainer: document.getElementById('defectListContainer')
-};
 
-// --- Initialization ---
-document.addEventListener('DOMContentLoaded', () => {
-  initEventListeners();
-});
+"use strict";
 
-function initEventListeners() {
-  // File Upload Handling
-  if (elements.selectFileBtn && elements.fileInput) {
-    elements.selectFileBtn.addEventListener('click', () => elements.fileInput.click());
-    elements.fileInput.addEventListener('change', handleFileSelect);
-  }
 
-  if (elements.dropZone) {
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-      elements.dropZone.addEventListener(eventName, preventDefaults, false);
-    });
-    ['dragenter', 'dragover'].forEach(eventName => {
-      elements.dropZone.classList.add('highlight');
-    });
-    ['dragleave', 'drop'].forEach(eventName => {
-      elements.dropZone.classList.remove('highlight');
-    });
-    elements.dropZone.addEventListener('drop', handleDrop);
-  }
+/* ========================================================
+   GLOBAL STATE
+   ======================================================== */
 
-  // Webcam Controls
-  if (elements.toggleWebcamBtn) {
-    elements.toggleWebcamBtn.addEventListener('click', toggleWebcam);
-  }
-  if (elements.captureWebcamBtn) {
-    elements.captureWebcamBtn.addEventListener('click', captureWebcamFrame);
-  }
+let selectedFile = null;
 
-  // Inspection & Display Controls
-  if (elements.runInspectionBtn) {
-    elements.runInspectionBtn.addEventListener('click', runInspection);
-  }
-  if (elements.toggleViewBtn) {
-    elements.toggleViewBtn.addEventListener('click', toggleImageView);
-  }
-  if (elements.resetBtn) {
-    elements.resetBtn.addEventListener('click', resetDashboard);
-  }
-  if (elements.exportResultsBtn) {
-    elements.exportResultsBtn.addEventListener('click', exportResultsJSON);
-  }
-}
+let currentMode = "image";
 
-function preventDefaults(e) {
-  e.preventDefault();
-  e.stopPropagation();
-}
+let cameraStream = null;
 
-// --- Image Handling ---
-function handleFileSelect(e) {
-  const files = e.target.files;
-  if (files && files[0]) {
-    loadImageFile(files[0]);
-  }
-}
+let webcamRunning = false;
 
-function handleDrop(e) {
-  const dt = e.dataTransfer;
-  const files = dt.files;
-  if (files && files[0]) {
-    loadImageFile(files[0]);
-  }
-}
+let webcamTimer = null;
 
-function loadImageFile(file) {
-  if (!file.type.startsWith('image/')) {
-    alert('Please upload a valid image file (JPEG, PNG).');
-    return;
-  }
+let webcamFrameCount = 0;
 
-  // Cleanup existing Object URL to prevent memory leaks
-  if (state.currentImageObjectUrl) {
-    URL.revokeObjectURL(state.currentImageObjectUrl);
-  }
+let webcamLastFpsTime = 0;
 
-  state.currentFile = file;
-  state.currentImageObjectUrl = URL.createObjectURL(file);
-  state.annotatedImageDataUrl = null;
-  state.inspectionResults = null;
+let webcamConfidence = 0.50;
 
-  renderImagePreview(state.currentImageObjectUrl);
-  if (elements.runInspectionBtn) elements.runInspectionBtn.disabled = false;
-  clearResultsDisplay();
-}
+let imageConfidence = 0.50;
 
-function renderImagePreview(src) {
-  if (!elements.previewImage) return;
-  elements.previewImage.src = src;
-  elements.previewImage.onload = () => {
-    if (elements.annotationCanvas) {
-      elements.annotationCanvas.width = elements.previewImage.naturalWidth;
-      elements.annotationCanvas.height = elements.previewImage.naturalHeight;
-      clearCanvas();
+
+/*
+IMPORTANT:
+The frontend also knows the class mapping so that
+even if model.names contains incorrect names,
+the UI still displays the correct names.
+*/
+
+const CLASS_MAP = {
+
+    0: {
+        name: "Bad Weld",
+        good: false,
+        defective: true
+    },
+
+    1: {
+        name: "Good Weld",
+        good: true,
+        defective: false
+    },
+
+    2: {
+        name: "Defect",
+        good: false,
+        defective: true
     }
-  };
+
+};
+
+
+/* ========================================================
+   DOM HELPER
+   ======================================================== */
+
+function $(id) {
+
+    return document.getElementById(id);
+
 }
 
-// --- Webcam Integration ---
-async function toggleWebcam() {
-  if (state.isWebcamActive) {
-    stopWebcam();
-  } else {
-    await startWebcam();
-  }
+
+/* ========================================================
+   INITIALIZATION
+   ======================================================== */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    () => {
+
+        initializeApplication();
+
+    }
+);
+
+
+function initializeApplication() {
+
+    setupModeTabs();
+
+    setupImageControls();
+
+    setupWebcamControls();
+
+    setupConfidenceSliders();
+
+    setupDragAndDrop();
+
+    checkServerStatus();
+
+    /*
+    Check API every 30 seconds.
+    */
+
+    setInterval(
+        checkServerStatus,
+        30000
+    );
+
 }
+
+
+/* ========================================================
+   MODE SWITCHING
+   ======================================================== */
+
+function setupModeTabs() {
+
+    const imageTab =
+        $("tab-image");
+
+    const webcamTab =
+        $("tab-webcam");
+
+
+    if (imageTab) {
+
+        imageTab.addEventListener(
+            "click",
+            () => {
+
+                switchMode("image");
+
+            }
+        );
+
+    }
+
+
+    if (webcamTab) {
+
+        webcamTab.addEventListener(
+            "click",
+            () => {
+
+                switchMode("webcam");
+
+            }
+        );
+
+    }
+
+}
+
+
+function switchMode(mode) {
+
+    currentMode = mode;
+
+
+    const imageTab =
+        $("tab-image");
+
+    const webcamTab =
+        $("tab-webcam");
+
+    const imageControls =
+        $("image-controls");
+
+    const webcamControls =
+        $("webcam-controls");
+
+    const imagePanel =
+        $("panel-image");
+
+    const webcamPanel =
+        $("panel-webcam");
+
+    const viewerMode =
+        $("viewer-mode-tag");
+
+    const viewerTitle =
+        $("viewer-title");
+
+
+    if (mode === "image") {
+
+        /*
+        Stop camera when leaving webcam mode.
+        */
+
+        stopWebcam();
+
+
+        imageTab?.classList.add(
+            "active"
+        );
+
+        webcamTab?.classList.remove(
+            "active"
+        );
+
+
+        imageTab?.setAttribute(
+            "aria-selected",
+            "true"
+        );
+
+        webcamTab?.setAttribute(
+            "aria-selected",
+            "false"
+        );
+
+
+        imageControls?.classList.remove(
+            "hidden"
+        );
+
+        webcamControls?.classList.add(
+            "hidden"
+        );
+
+
+        imagePanel?.classList.remove(
+            "hidden"
+        );
+
+        webcamPanel?.classList.add(
+            "hidden"
+        );
+
+
+        if (viewerMode) {
+
+            viewerMode.textContent =
+                "IMAGE MODE";
+
+        }
+
+
+        if (viewerTitle) {
+
+            viewerTitle.textContent =
+                "Inspection Viewer";
+
+        }
+
+
+        hideBanner(
+            $("webcam-banner")
+        );
+
+
+    } else {
+
+        imageTab?.classList.remove(
+            "active"
+        );
+
+        webcamTab?.classList.add(
+            "active"
+        );
+
+
+        imageTab?.setAttribute(
+            "aria-selected",
+            "false"
+        );
+
+        webcamTab?.setAttribute(
+            "aria-selected",
+            "true"
+        );
+
+
+        imageControls?.classList.add(
+            "hidden"
+        );
+
+        webcamControls?.classList.remove(
+            "hidden"
+        );
+
+
+        imagePanel?.classList.add(
+            "hidden"
+        );
+
+        webcamPanel?.classList.remove(
+            "hidden"
+        );
+
+
+        if (viewerMode) {
+
+            viewerMode.textContent =
+                "LIVE MODE";
+
+        }
+
+
+        if (viewerTitle) {
+
+            viewerTitle.textContent =
+                "Live Weld Inspection";
+
+        }
+
+
+        hideBanner(
+            $("img-banner")
+        );
+
+    }
+
+}
+
+
+/* ========================================================
+   IMAGE CONTROLS
+   ======================================================== */
+
+function setupImageControls() {
+
+    const uploadButton =
+        $("upload-btn");
+
+    const fileInput =
+        $("file-input");
+
+    const detectButton =
+        $("detect-btn");
+
+    const clearButton =
+        $("clear-btn");
+
+
+    uploadButton?.addEventListener(
+        "click",
+        () => {
+
+            fileInput?.click();
+
+        }
+    );
+
+
+    fileInput?.addEventListener(
+        "change",
+        () => {
+
+            const file =
+                fileInput.files?.[0];
+
+            if (file) {
+
+                handleSelectedFile(
+                    file
+                );
+
+            }
+
+        }
+    );
+
+
+    detectButton?.addEventListener(
+        "click",
+        inspectImage
+    );
+
+
+    clearButton?.addEventListener(
+        "click",
+        clearImage
+    );
+
+}
+
+
+/* ========================================================
+   FILE HANDLING
+   ======================================================== */
+
+function handleSelectedFile(file) {
+
+    if (
+        !file.type ||
+        !file.type.startsWith("image/")
+    ) {
+
+        showImageError(
+            "Please select a valid image file."
+        );
+
+        return;
+
+    }
+
+
+    /*
+    Maximum 10 MB.
+    */
+
+    if (
+        file.size >
+        10 * 1024 * 1024
+    ) {
+
+        showImageError(
+            "Image is too large. Maximum size is 10 MB."
+        );
+
+        return;
+
+    }
+
+
+    selectedFile = file;
+
+
+    const reader =
+        new FileReader();
+
+
+    reader.onload = (event) => {
+
+        const image =
+            $("original-image");
+
+        const imageViewer =
+            $("image-viewer-area");
+
+        const dropZone =
+            $("drop-zone");
+
+        const detectButton =
+            $("detect-btn");
+
+        const clearButton =
+            $("clear-btn");
+
+        const annotated =
+            $("annotated-image");
+
+        const placeholder =
+            $("detected-placeholder");
+
+
+        if (image) {
+
+            image.src =
+                event.target.result;
+
+        }
+
+
+        dropZone?.classList.add(
+            "hidden"
+        );
+
+        imageViewer?.classList.remove(
+            "hidden"
+        );
+
+
+        if (annotated) {
+
+            annotated.src = "";
+
+            annotated.classList.add(
+                "hidden"
+            );
+
+        }
+
+
+        placeholder?.classList.remove(
+            "hidden"
+        );
+
+
+        detectButton?.removeAttribute(
+            "disabled"
+        );
+
+
+        clearButton?.classList.remove(
+            "hidden"
+        );
+
+
+        resetResultCard();
+
+        hideBanner(
+            $("img-banner")
+        );
+
+    };
+
+
+    reader.readAsDataURL(
+        file
+    );
+
+}
+
+
+/* ========================================================
+   DRAG AND DROP
+   ======================================================== */
+
+function setupDragAndDrop() {
+
+    const dropZone =
+        $("drop-zone");
+
+    const fileInput =
+        $("file-input");
+
+
+    if (!dropZone) {
+
+        return;
+
+    }
+
+
+    dropZone.addEventListener(
+        "click",
+        () => {
+
+            fileInput?.click();
+
+        }
+    );
+
+
+    dropZone.addEventListener(
+        "keydown",
+        (event) => {
+
+            if (
+                event.key === "Enter" ||
+                event.key === " "
+            ) {
+
+                event.preventDefault();
+
+                fileInput?.click();
+
+            }
+
+        }
+    );
+
+
+    dropZone.addEventListener(
+        "dragover",
+        (event) => {
+
+            event.preventDefault();
+
+            dropZone.classList.add(
+                "dragging"
+            );
+
+        }
+    );
+
+
+    dropZone.addEventListener(
+        "dragleave",
+        () => {
+
+            dropZone.classList.remove(
+                "dragging"
+            );
+
+        }
+    );
+
+
+    dropZone.addEventListener(
+        "drop",
+        (event) => {
+
+            event.preventDefault();
+
+            dropZone.classList.remove(
+                "dragging"
+            );
+
+
+            const files =
+                event.dataTransfer.files;
+
+
+            if (
+                files &&
+                files.length > 0
+            ) {
+
+                handleSelectedFile(
+                    files[0]
+                );
+
+            }
+
+        }
+    );
+
+}
+
+
+/* ========================================================
+   IMAGE INSPECTION
+   ======================================================== */
+
+async function inspectImage() {
+
+    if (!selectedFile) {
+
+        showImageError(
+            "Please upload a weld image first."
+        );
+
+        return;
+
+    }
+
+
+    const detectButton =
+        $("detect-btn");
+
+    const banner =
+        $("img-banner");
+
+
+    detectButton.disabled =
+        true;
+
+
+    const originalText =
+        detectButton.textContent;
+
+
+    detectButton.textContent =
+        "Inspecting...";
+
+
+    hideBanner(
+        banner
+    );
+
+
+    try {
+
+        const formData =
+            new FormData();
+
+
+        formData.append(
+            "file",
+            selectedFile
+        );
+
+
+        formData.append(
+            "confidence",
+            imageConfidence.toString()
+        );
+
+
+        const response =
+            await fetch(
+                "/predict",
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        let data;
+
+
+        try {
+
+            data =
+                await response.json();
+
+        } catch {
+
+            throw new Error(
+                "Server returned an invalid response."
+            );
+
+        }
+
+
+        if (
+            !response.ok ||
+            !data.success
+        ) {
+
+            throw new Error(
+                data.error ||
+                "Inspection failed."
+            );
+
+        }
+
+
+        displayImageResult(
+            data
+        );
+
+
+    } catch (error) {
+
+        console.error(
+            "Image inspection error:",
+            error
+        );
+
+
+        showImageError(
+            error.message ||
+            "Could not inspect image."
+        );
+
+
+    } finally {
+
+        detectButton.disabled =
+            false;
+
+
+        /*
+        Restore button text.
+        */
+
+        detectButton.innerHTML = `
+            <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+            >
+                <circle
+                    cx="11"
+                    cy="11"
+                    r="8"
+                />
+                <path
+                    d="M21 21l-4.35-4.35"
+                />
+            </svg>
+            Inspect Weld
+        `;
+
+    }
+
+}
+
+
+/* ========================================================
+   DISPLAY IMAGE RESULT
+   ======================================================== */
+
+function displayImageResult(data) {
+
+    const annotatedImage =
+        $("annotated-image");
+
+    const placeholder =
+        $("detected-placeholder");
+
+
+    if (annotatedImage) {
+
+        annotatedImage.src =
+            data.image;
+
+        annotatedImage.classList.remove(
+            "hidden"
+        );
+
+    }
+
+
+    placeholder?.classList.add(
+        "hidden"
+    );
+
+
+    /*
+    Normalize detections.
+    */
+
+    const detections =
+        Array.isArray(
+            data.detections
+        )
+            ? data.detections
+            : [];
+
+
+    /*
+    Correct verdict.
+    */
+
+    const verdict =
+        calculateVerdict(
+            detections
+        );
+
+
+    /*
+    Display result.
+    */
+
+    updateVerdictCard(
+        verdict,
+        detections
+    );
+
+
+    updateDetectionList(
+        detections,
+        $("detection-cards")
+    );
+
+
+    updateStats(
+        detections.length,
+        data.inference_time_ms
+    );
+
+
+    /*
+    Overlay verdict.
+    */
+
+    const badge =
+        $("img-verdict-badge");
+
+
+    if (badge) {
+
+        badge.classList.remove(
+            "hidden",
+            "good",
+            "defective",
+            "neutral"
+        );
+
+
+        if (
+            verdict.status ===
+            "GOOD"
+        ) {
+
+            badge.textContent =
+                "✓ GOOD WELD";
+
+            badge.classList.add(
+                "good"
+            );
+
+
+        } else if (
+            verdict.status ===
+            "DEFECT"
+        ) {
+
+            badge.textContent =
+                "⚠ DEFECTIVE";
+
+            badge.classList.add(
+                "defective"
+            );
+
+
+        } else {
+
+            badge.textContent =
+                "○ NO WELD";
+
+            badge.classList.add(
+                "neutral"
+            );
+
+        }
+
+    }
+
+}
+
+
+/* ========================================================
+   CORRECT VERDICT CALCULATION
+   ======================================================== */
+
+function calculateVerdict(
+    detections
+) {
+
+    /*
+    IMPORTANT:
+
+    Class 0 = Bad Weld = DEFECT
+    Class 1 = Good Weld = GOOD
+    Class 2 = Defect = DEFECT
+    */
+
+
+    const defective =
+        detections.filter(
+            detection => {
+
+                const id =
+                    Number(
+                        detection.class_id
+                    );
+
+                return (
+                    id === 0 ||
+                    id === 2
+                );
+
+            }
+        );
+
+
+    const good =
+        detections.filter(
+            detection => {
+
+                const id =
+                    Number(
+                        detection.class_id
+                    );
+
+                return id === 1;
+
+            }
+        );
+
+
+    /*
+    If ANY defective detection exists,
+    overall result is DEFECT.
+    */
+
+    if (
+        defective.length > 0
+    ) {
+
+        const best =
+            defective.reduce(
+                (
+                    highest,
+                    current
+                ) => {
+
+                    return Number(
+                        current.confidence
+                    ) >
+                    Number(
+                        highest.confidence
+                    )
+                        ? current
+                        : highest;
+
+                }
+            );
+
+
+        return {
+
+            status: "DEFECT",
+
+            confidence:
+                Number(
+                    best.confidence
+                )
+
+        };
+
+    }
+
+
+    /*
+    Otherwise, if Good Weld exists,
+    result is GOOD.
+    */
+
+    if (
+        good.length > 0
+    ) {
+
+        const best =
+            good.reduce(
+                (
+                    highest,
+                    current
+                ) => {
+
+                    return Number(
+                        current.confidence
+                    ) >
+                    Number(
+                        highest.confidence
+                    )
+                        ? current
+                        : highest;
+
+                }
+            );
+
+
+        return {
+
+            status: "GOOD",
+
+            confidence:
+                Number(
+                    best.confidence
+                )
+
+        };
+
+    }
+
+
+    /*
+    Nothing detected.
+    */
+
+    return {
+
+        status: "NO_WELD",
+
+        confidence: 0
+
+    };
+
+}
+
+
+/* ========================================================
+   VERDICT CARD
+   ======================================================== */
+
+function updateVerdictCard(
+    verdict,
+    detections
+) {
+
+    const card =
+        $("verdict-card");
+
+    const icon =
+        $("verdict-icon");
+
+    const label =
+        $("verdict-label");
+
+    const confidence =
+        $("verdict-conf-display");
+
+    const subtitle =
+        $("verdict-sub");
+
+
+    card?.classList.remove(
+        "idle",
+        "good",
+        "defective",
+        "neutral"
+    );
+
+
+    if (
+        verdict.status ===
+        "GOOD"
+    ) {
+
+        card?.classList.add(
+            "good"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "✓";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "GOOD WELD";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                `${Math.round(
+                    verdict.confidence * 100
+                )}% confidence`;
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "Weld condition appears good";
+
+        }
+
+
+    } else if (
+        verdict.status ===
+        "DEFECT"
+    ) {
+
+        card?.classList.add(
+            "defective"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "⚠";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "DEFECTIVE";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                `${Math.round(
+                    verdict.confidence * 100
+                )}% confidence`;
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "Bad weld or weld defect detected";
+
+        }
+
+
+    } else {
+
+        card?.classList.add(
+            "neutral"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "○";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "NO WELD";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                "—";
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "No weld object detected";
+
+        }
+
+    }
+
+}
+
+
+/* ========================================================
+   DETECTION LIST
+   ======================================================== */
+
+function updateDetectionList(
+    detections,
+    container
+) {
+
+    if (!container) {
+
+        return;
+
+    }
+
+
+    container.innerHTML =
+        "";
+
+
+    if (
+        !detections ||
+        detections.length === 0
+    ) {
+
+        container.innerHTML = `
+            <div class="det-empty">
+                No detections found
+            </div>
+        `;
+
+        return;
+
+    }
+
+
+    detections.forEach(
+        (
+            detection
+        ) => {
+
+            const classId =
+                Number(
+                    detection.class_id
+                );
+
+
+            /*
+            FORCE correct class name.
+            */
+
+            const classInfo =
+                CLASS_MAP[
+                    classId
+                ] || {
+
+                    name:
+                        `Class ${classId}`,
+
+                    good: false,
+
+                    defective: false
+
+                };
+
+
+            const confidence =
+                Number(
+                    detection.confidence ||
+                    0
+                );
+
+
+            const percentage =
+                Math.round(
+                    confidence * 100
+                );
+
+
+            const item =
+                document.createElement(
+                    "div"
+                );
+
+
+            item.className =
+                classInfo.defective
+                    ? "detection-item defective"
+                    : "detection-item good";
+
+
+            item.innerHTML = `
+
+                <div class="detection-main">
+
+                    <span class="detection-name">
+
+                        ${escapeHTML(
+                            classInfo.name
+                        )}
+
+                    </span>
+
+                    <span class="detection-confidence">
+
+                        ${percentage}%
+
+                    </span>
+
+                </div>
+
+                <div class="detection-meta">
+
+                    Class ${classId}
+
+                    ${
+                        classInfo.defective
+                            ? " · DEFECT"
+                            : " · GOOD"
+                    }
+
+                </div>
+
+            `;
+
+
+            container.appendChild(
+                item
+            );
+
+        }
+    );
+
+}
+
+
+/* ========================================================
+   UPDATE STATISTICS
+   ======================================================== */
+
+function updateStats(
+    count,
+    inferenceTime
+) {
+
+    const countElement =
+        $("stat-count");
+
+    const inferenceElement =
+        $("stat-inference");
+
+
+    if (countElement) {
+
+        countElement.textContent =
+            count ?? 0;
+
+    }
+
+
+    if (inferenceElement) {
+
+        inferenceElement.textContent =
+            inferenceTime != null
+                ? Number(
+                    inferenceTime
+                ).toFixed(1)
+                : "—";
+
+    }
+
+}
+
+
+/* ========================================================
+   CLEAR IMAGE
+   ======================================================== */
+
+function clearImage() {
+
+    selectedFile =
+        null;
+
+
+    const fileInput =
+        $("file-input");
+
+    const dropZone =
+        $("drop-zone");
+
+    const viewer =
+        $("image-viewer-area");
+
+    const detectButton =
+        $("detect-btn");
+
+    const clearButton =
+        $("clear-btn");
+
+    const original =
+        $("original-image");
+
+    const annotated =
+        $("annotated-image");
+
+    const placeholder =
+        $("detected-placeholder");
+
+    const badge =
+        $("img-verdict-badge");
+
+
+    if (fileInput) {
+
+        fileInput.value =
+            "";
+
+    }
+
+
+    original?.removeAttribute(
+        "src"
+    );
+
+    annotated?.removeAttribute(
+        "src"
+    );
+
+
+    annotated?.classList.add(
+        "hidden"
+    );
+
+
+    placeholder?.classList.remove(
+        "hidden"
+    );
+
+
+    badge?.classList.add(
+        "hidden"
+    );
+
+
+    viewer?.classList.add(
+        "hidden"
+    );
+
+
+    dropZone?.classList.remove(
+        "hidden"
+    );
+
+
+    detectButton?.setAttribute(
+        "disabled",
+        "disabled"
+    );
+
+
+    clearButton?.classList.add(
+        "hidden"
+    );
+
+
+    hideBanner(
+        $("img-banner")
+    );
+
+
+    resetResultCard();
+
+}
+
+
+/* ========================================================
+   RESET RESULT CARD
+   ======================================================== */
+
+function resetResultCard() {
+
+    const card =
+        $("verdict-card");
+
+    const icon =
+        $("verdict-icon");
+
+    const label =
+        $("verdict-label");
+
+    const confidence =
+        $("verdict-conf-display");
+
+    const subtitle =
+        $("verdict-sub");
+
+
+    card?.classList.remove(
+        "good",
+        "defective",
+        "neutral"
+    );
+
+
+    card?.classList.add(
+        "idle"
+    );
+
+
+    if (icon) {
+
+        icon.textContent =
+            "○";
+
+    }
+
+
+    if (label) {
+
+        label.textContent =
+            "AWAITING";
+
+    }
+
+
+    if (confidence) {
+
+        confidence.textContent =
+            "—";
+
+    }
+
+
+    if (subtitle) {
+
+        subtitle.textContent =
+            "Upload an image to inspect";
+
+    }
+
+
+    updateStats(
+        0,
+        null
+    );
+
+
+    const list =
+        $("detection-cards");
+
+
+    if (list) {
+
+        list.innerHTML = `
+            <div class="det-empty">
+                No detections yet
+            </div>
+        `;
+
+    }
+
+}
+
+
+/* ========================================================
+   CONFIDENCE SLIDERS
+   ======================================================== */
+
+function setupConfidenceSliders() {
+
+    const imageSlider =
+        $("img-conf-slider");
+
+    const imageValue =
+        $("img-conf-value");
+
+
+    const webcamSlider =
+        $("webcam-conf-slider");
+
+    const webcamValue =
+        $("webcam-conf-value");
+
+
+    imageSlider?.addEventListener(
+        "input",
+        () => {
+
+            imageConfidence =
+                Number(
+                    imageSlider.value
+                );
+
+
+            if (imageValue) {
+
+                imageValue.textContent =
+                    `${Math.round(
+                        imageConfidence * 100
+                    )}%`;
+
+            }
+
+        }
+    );
+
+
+    webcamSlider?.addEventListener(
+        "input",
+        () => {
+
+            webcamConfidence =
+                Number(
+                    webcamSlider.value
+                );
+
+
+            if (webcamValue) {
+
+                webcamValue.textContent =
+                    `${Math.round(
+                        webcamConfidence * 100
+                    )}%`;
+
+            }
+
+        }
+    );
+
+}
+
+
+/* ========================================================
+   WEBCAM CONTROLS
+   ======================================================== */
+
+function setupWebcamControls() {
+
+    const startButton =
+        $("start-webcam-btn");
+
+    const stopButton =
+        $("stop-webcam-btn");
+
+
+    startButton?.addEventListener(
+        "click",
+        startWebcam
+    );
+
+
+    stopButton?.addEventListener(
+        "click",
+        stopWebcam
+    );
+
+}
+
+
+/* ========================================================
+   START WEBCAM
+   ======================================================== */
 
 async function startWebcam() {
-  try {
-    state.webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1920 }, height: { ideal: 1080 } }
-    });
-    if (elements.webcamVideo) {
-      elements.webcamVideo.srcObject = state.webcamStream;
-      elements.webcamVideo.style.display = 'block';
-      state.isWebcamActive = true;
-      if (elements.toggleWebcamBtn) elements.toggleWebcamBtn.textContent = 'Stop Camera';
-      if (elements.captureWebcamBtn) elements.captureWebcamBtn.disabled = false;
+
+    if (webcamRunning) {
+
+        return;
+
     }
-  } catch (err) {
-    console.error('Webcam initialization failed:', err);
-    alert('Unable to access camera feed: ' + err.message);
-  }
+
+
+    const video =
+        $("webcam-video");
+
+    const idle =
+        $("webcam-idle");
+
+    const liveBadge =
+        $("webcam-live-badge");
+
+    const fpsBadge =
+        $("webcam-fps-badge");
+
+    const startButton =
+        $("start-webcam-btn");
+
+    const stopButton =
+        $("stop-webcam-btn");
+
+    const cameraDot =
+        $("bar-camera-dot");
+
+    const cameraText =
+        $("bar-camera-text");
+
+
+    /*
+    Browser camera API.
+    */
+
+    if (
+        !navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia
+    ) {
+
+        showWebcamError(
+            "Your browser does not support webcam access."
+        );
+
+        return;
+
+    }
+
+
+    try {
+
+        cameraStream =
+            await navigator.mediaDevices.getUserMedia(
+                {
+                    video: {
+                        width: {
+                            ideal: 1280
+                        },
+
+                        height: {
+                            ideal: 720
+                        },
+
+                        facingMode:
+                            "user"
+                    },
+
+                    audio: false
+                }
+            );
+
+
+        video.srcObject =
+            cameraStream;
+
+
+        await video.play();
+
+
+        webcamRunning =
+            true;
+
+
+        /*
+        UI.
+        */
+
+        video.classList.remove(
+            "hidden"
+        );
+
+
+        idle?.classList.add(
+            "hidden"
+        );
+
+
+        liveBadge?.classList.remove(
+            "hidden"
+        );
+
+
+        fpsBadge?.classList.remove(
+            "hidden"
+        );
+
+
+        startButton?.classList.add(
+            "hidden"
+        );
+
+
+        stopButton?.classList.remove(
+            "hidden"
+        );
+
+
+        $("webcam-slider-hint")?.classList.remove(
+            "hidden"
+        );
+
+
+        if ($("webcam-conf-slider")) {
+
+            $("webcam-conf-slider").disabled =
+                true;
+
+        }
+
+
+        setDot(
+            cameraDot,
+            true
+        );
+
+
+        if (cameraText) {
+
+            cameraText.textContent =
+                "Camera Live";
+
+        }
+
+
+        hideBanner(
+            $("webcam-banner")
+        );
+
+
+        /*
+        Reset FPS.
+        */
+
+        webcamFrameCount =
+            0;
+
+        webcamLastFpsTime =
+            performance.now();
+
+
+        /*
+        Begin AI detection.
+        */
+
+        startWebcamDetection();
+
+
+    } catch (error) {
+
+        console.error(
+            "Camera error:",
+            error
+        );
+
+
+        showWebcamError(
+            getCameraErrorMessage(
+                error
+            )
+        );
+
+    }
+
 }
+
+
+/* ========================================================
+   CAMERA ERROR MESSAGE
+   ======================================================== */
+
+function getCameraErrorMessage(
+    error
+) {
+
+    if (
+        error &&
+        error.name ===
+        "NotAllowedError"
+    ) {
+
+        return (
+            "Camera permission was denied. "
+            +
+            "Allow camera access in your browser."
+        );
+
+    }
+
+
+    if (
+        error &&
+        error.name ===
+        "NotFoundError"
+    ) {
+
+        return (
+            "No camera was found on this device."
+        );
+
+    }
+
+
+    return (
+        "Unable to start camera."
+    );
+
+}
+
+
+/* ========================================================
+   START WEBCAM AI DETECTION
+   ======================================================== */
+
+function startWebcamDetection() {
+
+    if (webcamTimer) {
+
+        clearInterval(
+            webcamTimer
+        );
+
+    }
+
+
+    /*
+    Send approximately one frame every 1.2 seconds.
+
+    This prevents excessive requests to the Render
+    server and is much more suitable for a CPU server.
+    */
+
+    webcamTimer =
+        setInterval(
+            captureAndPredictFrame,
+            1200
+        );
+
+
+    /*
+    Immediately inspect first frame.
+    */
+
+    setTimeout(
+        captureAndPredictFrame,
+        300
+    );
+
+}
+
+
+/* ========================================================
+   CAPTURE WEBCAM FRAME
+   ======================================================== */
+
+async function captureAndPredictFrame() {
+
+    if (!webcamRunning) {
+
+        return;
+
+    }
+
+
+    const video =
+        $("webcam-video");
+
+    const canvas =
+        $("capture-canvas");
+
+
+    if (
+        !video ||
+        !canvas ||
+        video.readyState <
+        HTMLMediaElement.HAVE_CURRENT_DATA
+    ) {
+
+        return;
+
+    }
+
+
+    const width =
+        video.videoWidth;
+
+    const height =
+        video.videoHeight;
+
+
+    if (
+        !width ||
+        !height
+    ) {
+
+        return;
+
+    }
+
+
+    /*
+    Keep webcam frame reasonably small
+    before sending to Render.
+    */
+
+    const maxWidth =
+        960;
+
+
+    const scale =
+        Math.min(
+            1,
+            maxWidth / width
+        );
+
+
+    canvas.width =
+        Math.round(
+            width * scale
+        );
+
+
+    canvas.height =
+        Math.round(
+            height * scale
+        );
+
+
+    const context =
+        canvas.getContext(
+            "2d"
+        );
+
+
+    context.drawImage(
+        video,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+    );
+
+
+    /*
+    Convert canvas to JPEG.
+    */
+
+    const blob =
+        await new Promise(
+            resolve => {
+
+                canvas.toBlob(
+                    resolve,
+                    "image/jpeg",
+                    0.80
+                );
+
+            }
+        );
+
+
+    if (!blob) {
+
+        return;
+
+    }
+
+
+    const formData =
+        new FormData();
+
+
+    formData.append(
+        "file",
+        blob,
+        "webcam.jpg"
+    );
+
+
+    formData.append(
+        "confidence",
+        webcamConfidence.toString()
+    );
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/predict",
+                {
+                    method: "POST",
+                    body: formData
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (
+            !response.ok ||
+            !data.success
+        ) {
+
+            throw new Error(
+                data.error ||
+                "Webcam prediction failed."
+            );
+
+        }
+
+
+        /*
+        Update annotated image.
+        */
+
+        const annotated =
+            $("webcam-annotated");
+
+
+        if (annotated) {
+
+            annotated.src =
+                data.image;
+
+            annotated.classList.remove(
+                "hidden"
+            );
+
+        }
+
+
+        /*
+        Calculate correct verdict.
+        */
+
+        const detections =
+            Array.isArray(
+                data.detections
+            )
+                ? data.detections
+                : [];
+
+
+        const result =
+            calculateVerdict(
+                detections
+            );
+
+
+        updateWebcamVerdict(
+            result,
+            detections,
+            data.inference_time_ms
+        );
+
+
+        /*
+        FPS.
+        */
+
+        webcamFrameCount++;
+
+        updateFPS();
+
+
+    } catch (error) {
+
+        console.error(
+            "Webcam prediction error:",
+            error
+        );
+
+    }
+
+}
+
+
+/* ========================================================
+   WEBCAM VERDICT
+   ======================================================== */
+
+function updateWebcamVerdict(
+    result,
+    detections,
+    inferenceTime
+) {
+
+    const label =
+        $("verdict-label");
+
+    const icon =
+        $("verdict-icon");
+
+    const confidence =
+        $("verdict-conf-display");
+
+    const subtitle =
+        $("verdict-sub");
+
+    const card =
+        $("verdict-card");
+
+
+    card?.classList.remove(
+        "idle",
+        "good",
+        "defective",
+        "neutral"
+    );
+
+
+    if (
+        result.status ===
+        "DEFECT"
+    ) {
+
+        card?.classList.add(
+            "defective"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "⚠";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "DEFECTIVE";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                `${Math.round(
+                    result.confidence * 100
+                )}% confidence`;
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "Bad weld or defect detected";
+
+        }
+
+
+    } else if (
+        result.status ===
+        "GOOD"
+    ) {
+
+        card?.classList.add(
+            "good"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "✓";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "GOOD WELD";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                `${Math.round(
+                    result.confidence * 100
+                )}% confidence`;
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "Good weld detected";
+
+        }
+
+
+    } else {
+
+        card?.classList.add(
+            "neutral"
+        );
+
+
+        if (icon) {
+
+            icon.textContent =
+                "○";
+
+        }
+
+
+        if (label) {
+
+            label.textContent =
+                "NO WELD";
+
+        }
+
+
+        if (confidence) {
+
+            confidence.textContent =
+                "—";
+
+        }
+
+
+        if (subtitle) {
+
+            subtitle.textContent =
+                "No weld detected";
+
+        }
+
+    }
+
+
+    updateStats(
+        detections.length,
+        inferenceTime
+    );
+
+
+    const liveSection =
+        $("webcam-detection-cards-section");
+
+
+    if (
+        detections.length > 0
+    ) {
+
+        liveSection?.classList.remove(
+            "hidden"
+        );
+
+
+        updateDetectionList(
+            detections,
+            $("webcam-detection-cards")
+        );
+
+
+    } else {
+
+        liveSection?.classList.add(
+            "hidden"
+        );
+
+    }
+
+}
+
+
+/* ========================================================
+   FPS
+   ======================================================== */
+
+function updateFPS() {
+
+    const now =
+        performance.now();
+
+
+    const elapsed =
+        now -
+        webcamLastFpsTime;
+
+
+    if (
+        elapsed >= 1000
+    ) {
+
+        const fps =
+            (
+                webcamFrameCount *
+                1000
+            ) /
+            elapsed;
+
+
+        const badge =
+            $("webcam-fps-badge");
+
+
+        if (badge) {
+
+            badge.textContent =
+                `${fps.toFixed(1)} FPS`;
+
+        }
+
+
+        webcamFrameCount =
+            0;
+
+        webcamLastFpsTime =
+            now;
+
+    }
+
+}
+
+
+/* ========================================================
+   STOP WEBCAM
+   ======================================================== */
 
 function stopWebcam() {
-  if (state.webcamStream) {
-    state.webcamStream.getTracks().forEach(track => track.stop());
-    state.webcamStream = null;
-  }
-  if (elements.webcamVideo) {
-    elements.webcamVideo.style.display = 'none';
-  }
-  state.isWebcamActive = false;
-  if (elements.toggleWebcamBtn) elements.toggleWebcamBtn.textContent = 'Start Camera';
-  if (elements.captureWebcamBtn) elements.captureWebcamBtn.disabled = true;
-}
 
-function captureWebcamFrame() {
-  if (!state.isWebcamActive || !elements.webcamVideo) return;
+    webcamRunning =
+        false;
 
-  const canvas = elements.hiddenCanvas || document.createElement('canvas');
-  canvas.width = elements.webcamVideo.videoWidth;
-  canvas.height = elements.webcamVideo.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(elements.webcamVideo, 0, 0);
 
-  canvas.toBlob(blob => {
-    const file = new File([blob], `weld_capture_${Date.now()}.png`, { type: 'image/png' });
-    loadImageFile(file);
-    stopWebcam();
-  }, 'image/png');
-}
+    /*
+    Stop prediction timer.
+    */
 
-// --- Inspection API & Processing ---
-async function runInspection() {
-  if (!state.currentFile && !state.currentImageObjectUrl) return;
+    if (webcamTimer) {
 
-  setInspectingState(true);
+        clearInterval(
+            webcamTimer
+        );
 
-  try {
-    const formData = new FormData();
-    if (state.currentFile) {
-      formData.append('image', state.currentFile);
+        webcamTimer =
+            null;
+
     }
 
-    // Attempt real API fetch; fallback to simulation if backend is unreachable
-    let results;
+
+    /*
+    Stop browser camera.
+    */
+
+    if (cameraStream) {
+
+        cameraStream
+            .getTracks()
+            .forEach(
+                track => track.stop()
+            );
+
+        cameraStream =
+            null;
+
+    }
+
+
+    const video =
+        $("webcam-video");
+
+    const annotated =
+        $("webcam-annotated");
+
+    const idle =
+        $("webcam-idle");
+
+    const liveBadge =
+        $("webcam-live-badge");
+
+    const fpsBadge =
+        $("webcam-fps-badge");
+
+    const startButton =
+        $("start-webcam-btn");
+
+    const stopButton =
+        $("stop-webcam-btn");
+
+    const cameraDot =
+        $("bar-camera-dot");
+
+    const cameraText =
+        $("bar-camera-text");
+
+
+    if (video) {
+
+        video.pause();
+
+        video.srcObject =
+            null;
+
+        video.classList.add(
+            "hidden"
+        );
+
+    }
+
+
+    annotated?.classList.add(
+        "hidden"
+    );
+
+
+    idle?.classList.remove(
+        "hidden"
+    );
+
+
+    liveBadge?.classList.add(
+        "hidden"
+    );
+
+
+    fpsBadge?.classList.add(
+        "hidden"
+    );
+
+
+    startButton?.classList.remove(
+        "hidden"
+    );
+
+
+    stopButton?.classList.add(
+        "hidden"
+    );
+
+
+    $("webcam-slider-hint")?.classList.add(
+        "hidden"
+    );
+
+
+    const webcamSlider =
+        $("webcam-conf-slider");
+
+
+    if (webcamSlider) {
+
+        webcamSlider.disabled =
+            false;
+
+    }
+
+
+    setDot(
+        cameraDot,
+        false
+    );
+
+
+    if (cameraText) {
+
+        cameraText.textContent =
+            "Camera Idle";
+
+    }
+
+
+    hideBanner(
+        $("webcam-banner")
+    );
+
+}
+
+
+/* ========================================================
+   SERVER STATUS
+   ======================================================== */
+
+async function checkServerStatus() {
+
+    const apiBadge =
+        $("api-badge");
+
+    const modelBadge =
+        $("model-badge");
+
+
+    setBadge(
+        apiBadge,
+        "checking",
+        "API Checking…"
+    );
+
+
+    setBadge(
+        modelBadge,
+        "checking",
+        "Model Checking…"
+    );
+
+
     try {
-      const response = await fetch('/api/v1/inspect', {
-        method: 'POST',
-        body: formData
-      });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      results = await response.json();
-    } catch (networkError) {
-      console.warn('Backend API unreachable. Running client inspection simulation:', networkError);
-      results = await simulateInspectionResponse();
+
+        const response =
+            await fetch(
+                "/health",
+                {
+                    method: "GET",
+                    cache: "no-store"
+                }
+            );
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                `HTTP ${response.status}`
+            );
+
+        }
+
+
+        const data =
+            await response.json();
+
+
+        /*
+        API is online.
+        */
+
+        setBadge(
+            apiBadge,
+            "online",
+            "API Online"
+        );
+
+
+        updateSystemAPI(
+            true
+        );
+
+
+        /*
+        Model status.
+        */
+
+        if (
+            data.model_loaded
+        ) {
+
+            setBadge(
+                modelBadge,
+                "online",
+                "Model Online"
+            );
+
+
+            updateSystemModel(
+                true,
+                data
+            );
+
+
+        } else {
+
+            setBadge(
+                modelBadge,
+                "offline",
+                "Model Error"
+            );
+
+
+            updateSystemModel(
+                false,
+                data
+            );
+
+        }
+
+
+        /*
+        System information.
+        */
+
+        const device =
+            data.device ||
+            "CPU";
+
+
+        if ($("sys-device-label")) {
+
+            $("sys-device-label").textContent =
+                `Device: ${device}`;
+
+        }
+
+
+        if ($("perf-device")) {
+
+            $("perf-device").textContent =
+                device;
+
+        }
+
+
+        if ($("perf-model")) {
+
+            $("perf-model").textContent =
+                data.model_name ||
+                "best.onnx";
+
+        }
+
+
+        if ($("perf-status")) {
+
+            $("perf-status").textContent =
+                data.model_loaded
+                    ? "Ready"
+                    : "Error";
+
+        }
+
+
+    } catch (error) {
+
+        console.error(
+            "Health check failed:",
+            error
+        );
+
+
+        setBadge(
+            apiBadge,
+            "offline",
+            "API Offline"
+        );
+
+
+        setBadge(
+            modelBadge,
+            "offline",
+            "Model Unknown"
+        );
+
+
+        updateSystemAPI(
+            false
+        );
+
+
+        updateSystemModel(
+            false
+        );
+
+
+        if ($("perf-status")) {
+
+            $("perf-status").textContent =
+                "Offline";
+
+        }
+
     }
 
-    state.inspectionResults = results;
-    renderInspectionResults(results);
-
-  } catch (error) {
-    console.error('Inspection failed:', error);
-    updateStatusBadge('FAILED', 'status-danger');
-  } finally {
-    setInspectingState(false);
-  }
 }
 
-// Simulated ML detection payload when running without an active backend API
-function simulateInspectionResponse() {
-  return new Promise(resolve => {
-    setTimeout(() => {
-      resolve({
-        status: 'DEFECT_DETECTED', // 'PASS' | 'DEFECT_DETECTED'
-        overallConfidence: 94.2,
-        processingTimeMs: 142,
-        defects: [
-          {
-            id: 1,
-            type: 'Porosity',
-            severity: 'High',
-            confidence: 96.5,
-            bbox: [120, 80, 200, 160] // [x1, y1, x2, y2]
-          },
-          {
-            id: 2,
-            type: 'Lack of Penetration',
-            severity: 'Medium',
-            confidence: 91.8,
-            bbox: [340, 210, 480, 260]
-          }
-        ]
-      });
-    }, 800);
-  });
+
+/* ========================================================
+   UPDATE API STATUS
+   ======================================================== */
+
+function updateSystemAPI(
+    online
+) {
+
+    const dot =
+        $("sys-api-dot");
+
+    const footerDot =
+        $("bar-api-dot");
+
+    const footerText =
+        $("bar-api-text");
+
+
+    setDot(
+        dot,
+        online
+    );
+
+
+    setDot(
+        footerDot,
+        online
+    );
+
+
+    if (footerText) {
+
+        footerText.textContent =
+            online
+                ? "API Online"
+                : "API Offline";
+
+    }
+
 }
 
-// --- UI Rendering ---
-function renderInspectionResults(results) {
-  // Update Metrics
-  if (elements.confidenceMetric) elements.confidenceMetric.textContent = `${results.overallConfidence.toFixed(1)}%`;
-  if (elements.defectCountMetric) elements.defectCountMetric.textContent = results.defects.length;
-  if (elements.processingTimeMetric) elements.processingTimeMetric.textContent = `${results.processingTimeMs} ms`;
 
-  // Update Status Badge
-  if (results.defects.length === 0) {
-    updateStatusBadge('PASSED', 'status-success');
-  } else {
-    updateStatusBadge('DEFECT DETECTED', 'status-warning');
-  }
+/* ========================================================
+   UPDATE MODEL STATUS
+   ======================================================== */
 
-  // Draw Bounding Boxes on Overlay Canvas
-  drawBoundingBoxes(results.defects);
+function updateSystemModel(
+    online,
+    data = {}
+) {
 
-  // Populate Defect List Section
-  renderDefectList(results.defects);
+    const dot =
+        $("sys-model-dot");
+
+    const footerDot =
+        $("bar-model-dot");
+
+    const footerText =
+        $("bar-model-text");
+
+
+    setDot(
+        dot,
+        online
+    );
+
+
+    setDot(
+        footerDot,
+        online
+    );
+
+
+    if (footerText) {
+
+        footerText.textContent =
+            online
+                ? `Model: ${
+                    data.model_name ||
+                    "best.onnx"
+                  }`
+                : "Model Error";
+
+    }
+
 }
 
-function drawBoundingBoxes(defects) {
-  if (!elements.annotationCanvas) return;
-  const ctx = elements.annotationCanvas.getContext('2d');
-  clearCanvas();
 
-  defects.forEach(defect => {
-    const [x1, y1, x2, y2] = defect.bbox;
-    const width = x2 - x1;
-    const height = y2 - y1;
+/* ========================================================
+   STATUS BADGE
+   ======================================================== */
 
-    // Outer Bounding Box
-    ctx.strokeStyle = defect.severity === 'High' ? '#ef4444' : '#f59e0b';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(x1, y1, width, height);
+function setBadge(
+    badge,
+    state,
+    text
+) {
 
-    // Box Tint Fill
-    ctx.fillStyle = defect.severity === 'High' ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)';
-    ctx.fillRect(x1, y1, width, height);
+    if (!badge) {
 
-    // Label Header Tag
-    const label = `${defect.type} (${defect.confidence.toFixed(1)}%)`;
-    ctx.font = 'bold 14px sans-serif';
-    const textWidth = ctx.measureText(label).width;
+        return;
 
-    ctx.fillStyle = defect.severity === 'High' ? '#ef4444' : '#f59e0b';
-    ctx.fillRect(x1, y1 > 22 ? y1 - 22 : y1, textWidth + 10, 22);
+    }
 
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, x1 + 5, y1 > 22 ? y1 - 6 : y1 + 16);
-  });
+
+    badge.classList.remove(
+        "muted",
+        "online",
+        "offline",
+        "checking"
+    );
+
+
+    badge.classList.add(
+        state
+    );
+
+
+    const textElement =
+        badge.querySelector(
+            ".pill-text"
+        );
+
+
+    if (textElement) {
+
+        textElement.textContent =
+            text;
+
+    }
+
 }
 
-function clearCanvas() {
-  if (!elements.annotationCanvas) return;
-  const ctx = elements.annotationCanvas.getContext('2d');
-  ctx.clearRect(0, 0, elements.annotationCanvas.width, elements.annotationCanvas.height);
+
+/* ========================================================
+   DOT STATUS
+   ======================================================== */
+
+function setDot(
+    dot,
+    online
+) {
+
+    if (!dot) {
+
+        return;
+
+    }
+
+
+    dot.classList.remove(
+        "green",
+        "red",
+        "online",
+        "offline"
+    );
+
+
+    if (online) {
+
+        dot.classList.add(
+            "green",
+            "online"
+        );
+
+
+    } else {
+
+        dot.classList.add(
+            "red",
+            "offline"
+        );
+
+    }
+
 }
 
-function renderDefectList(defects) {
-  if (!elements.defectListContainer) return;
 
-  if (defects.length === 0) {
-    elements.defectListContainer.innerHTML = '<p class="empty-state">No defects detected in weld region.</p>';
-    return;
-  }
+/* ========================================================
+   ERROR BANNERS
+   ======================================================== */
 
-  const itemsHtml = defects.map(d => `
-    <div class="defect-item defect-severity-${d.severity.toLowerCase()}">
-      <div class="defect-header">
-        <span class="defect-title">#${d.id} ${d.type}</span>
-        <span class="defect-badge">${d.severity}</span>
-      </div>
-      <div class="defect-details">
-        <span>Confidence: ${d.confidence.toFixed(1)}%</span>
-        <span>BBox: [${d.bbox.join(', ')}]</span>
-      </div>
-    </div>
-  `).join('');
+function showImageError(
+    message
+) {
 
-  elements.defectListContainer.innerHTML = itemsHtml;
+    showBanner(
+        $("img-banner"),
+        message
+    );
+
 }
 
-function toggleImageView() {
-  if (!elements.annotationCanvas) return;
 
-  if (state.activeView === 'annotated') {
-    state.activeView = 'raw';
-    elements.annotationCanvas.style.display = 'none';
-    if (elements.viewModeLabel) elements.viewModeLabel.textContent = 'View Mode: Raw Image';
-  } else {
-    state.activeView = 'annotated';
-    elements.annotationCanvas.style.display = 'block';
-    if (elements.viewModeLabel) elements.viewModeLabel.textContent = 'View Mode: Annotated Overlay';
-  }
+function showWebcamError(
+    message
+) {
+
+    showBanner(
+        $("webcam-banner"),
+        message
+    );
+
 }
 
-function setInspectingState(isInspecting) {
-  state.isInspecting = isInspecting;
-  if (elements.runInspectionBtn) {
-    elements.runInspectionBtn.disabled = isInspecting;
-    elements.runInspectionBtn.textContent = isInspecting ? 'Analyzing Weld...' : 'Run Inspection';
-  }
+
+function showBanner(
+    element,
+    message
+) {
+
+    if (!element) {
+
+        return;
+
+    }
+
+
+    element.textContent =
+        message;
+
+
+    element.classList.remove(
+        "hidden"
+    );
+
 }
 
-function updateStatusBadge(text, badgeClass) {
-  if (!elements.statusBadge) return;
-  elements.statusBadge.textContent = text;
-  elements.statusBadge.className = `status-badge ${badgeClass}`;
+
+function hideBanner(
+    element
+) {
+
+    element?.classList.add(
+        "hidden"
+    );
+
 }
 
-function clearResultsDisplay() {
-  if (elements.confidenceMetric) elements.confidenceMetric.textContent = '--';
-  if (elements.defectCountMetric) elements.defectCountMetric.textContent = '--';
-  if (elements.processingTimeMetric) elements.processingTimeMetric.textContent = '--';
-  if (elements.defectListContainer) elements.defectListContainer.innerHTML = '';
-  updateStatusBadge('READY', 'status-neutral');
-  clearCanvas();
-}
 
-function resetDashboard() {
-  stopWebcam();
-  if (state.currentImageObjectUrl) {
-    URL.revokeObjectURL(state.currentImageObjectUrl);
-  }
+/* ========================================================
+   ESCAPE HTML
+   ======================================================== */
 
-  state.currentFile = null;
-  state.currentImageObjectUrl = null;
-  state.annotatedImageDataUrl = null;
-  state.inspectionResults = null;
+function escapeHTML(
+    value
+) {
 
-  if (elements.previewImage) elements.previewImage.src = '';
-  if (elements.fileInput) elements.fileInput.value = '';
-  if (elements.runInspectionBtn) elements.runInspectionBtn.disabled = true;
+    const div =
+        document.createElement(
+            "div"
+        );
 
-  clearResultsDisplay();
-}
 
-function exportResultsJSON() {
-  if (!state.inspectionResults) {
-    alert('No inspection results available to export.');
-    return;
-  }
+    div.textContent =
+        value == null
+            ? ""
+            : String(value);
 
-  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.inspectionResults, null, 2));
-  const downloadAnchor = document.createElement('a');
-  downloadAnchor.setAttribute("href", dataStr);
-  downloadAnchor.setAttribute("download", `weld_inspection_${Date.now()}.json`);
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
+
+    return div.innerHTML;
+
 }
