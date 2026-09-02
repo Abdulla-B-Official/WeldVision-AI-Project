@@ -3,10 +3,11 @@ app.py — WeldVision AI Flask Server
 
 YOLO Native Class Mapping
 -------------------------
-0 = Good Weld -> PASS
-1 = Bad Weld  -> DEFECT
-2 = Defect    -> DEFECT
-
+CLASS_MAPPING = {
+    0: "Bad Weld",
+    1: "Defect",
+    2: "Good Weld",
+}
 Overall Verdict Priority
 ------------------------
 DEFECT > PASS > NO_WELD
@@ -64,9 +65,9 @@ app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024
 # ============================================================
 
 CLASS_MAPPING = {
-    0: "Good Weld",
-    1: "Bad Weld",
-    2: "Defect",
+    0: "Bad Weld",
+    1: "Defect",
+    2: "Good Weld",
 }
 
 
