@@ -4,12 +4,21 @@ Handles UI rendering, image uploads, batch inference, and API endpoints.
 """
 
 import base64
+import os
+import sys
 import cv2
 import numpy as np
 from flask import Flask, jsonify, render_template, request
 
-from config import DEFAULT_CONF_THRESHOLD
-from model_service import get_status, run_inference
+# Ensure local folder is in sys.path for Gunicorn / Render execution
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from config import DEFAULT_CONF_THRESHOLD
+    from model_service import get_status, run_inference
+except ModuleNotFoundError:
+    from web_app.config import DEFAULT_CONF_THRESHOLD
+    from web_app.model_service import get_status, run_inference
 
 app = Flask(__name__)
 
@@ -31,21 +40,26 @@ def predict():
     """Single image inference route."""
     if "file" not in request.files:
         return jsonify({"success": False, "error": "No file uploaded"}), 400
-        
+
     file = request.files["file"]
     if file.filename == "":
         return jsonify({"success": False, "error": "No selected file"}), 400
 
     try:
         # Fetch confidence threshold from request if provided
-        conf_threshold = float(request.form.get("confidence", DEFAULT_CONF_THRESHOLD))
-        
+        conf_threshold = float(
+            request.form.get("confidence", DEFAULT_CONF_THRESHOLD)
+        )
+
         # Read image file into OpenCV array
         file_bytes = np.frombuffer(file.read(), np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
 
         if image is None:
-            return jsonify({"success": False, "error": "Invalid image format"}), 400
+            return (
+                jsonify({"success": False, "error": "Invalid image format"}),
+                400,
+            )
 
         # Run ONNX inference
         result = run_inference(image, conf_threshold=conf_threshold)
@@ -76,7 +90,9 @@ def predict_batch():
     if not files or files[0].filename == "":
         return jsonify({"success": False, "error": "No files uploaded"}), 400
 
-    conf_threshold = float(request.form.get("confidence", DEFAULT_CONF_THRESHOLD))
+    conf_threshold = float(
+        request.form.get("confidence", DEFAULT_CONF_THRESHOLD)
+    )
     batch_results = []
 
     for file in files:
@@ -88,7 +104,7 @@ def predict_batch():
             if res["success"]:
                 _, buffer = cv2.imencode(".jpg", res["annotated_image"])
                 encoded = base64.b64encode(buffer).decode("utf-8")
-                
+
                 batch_results.append({
                     "filename": file.filename,
                     "image": f"data:image/jpeg;base64,{encoded}",
