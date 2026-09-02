@@ -2,5 +2,8 @@ path: datasets
 train: train/images
 val: valid/images
 test: test/images
- 
-names: ["Good Weld", "Bad Weld", "Defect"]
+
+names:
+  0: Good Weld
+  1: Bad Weld
+  2: Defect
